@@ -271,9 +271,7 @@ enum ClaudeUsageParser {
     if let slow = window(.slow, dict: payload["seven_day"], defaultDuration: 7 * 24 * 3600, now: now) {
       windows.append(slow)
     }
-    if let fable = fableWindow(from: payload, now: now) {
-      windows.append(fable)
-    }
+    windows.append(contentsOf: scopedWindows(from: payload, now: now))
     return windows
   }
 
@@ -297,38 +295,56 @@ enum ClaudeUsageParser {
     )
   }
 
-  private static func fableWindow(from payload: [String: Any], now: Date) -> UsageWindow? {
+  /// Every active `weekly_scoped` entry in `limits[]` becomes a first-class
+  /// window. Fable keeps its four-pointed star; every other model renders as a
+  /// dropdown-only row so an active scoped limit can never be silently hidden.
+  static func scopedWindows(from payload: [String: Any], now: Date) -> [UsageWindow] {
     guard let limits = payload["limits"] as? [[String: Any]] else {
-      return nil
+      return []
     }
 
+    var windows: [UsageWindow] = []
+    var seenScopeKeys: Set<String> = []
     for limit in limits {
       guard
         string(limit["group"]) == "weekly",
         string(limit["kind"]) == "weekly_scoped",
         bool(limit["is_active"]) == true,
-        modelName(from: limit)?.localizedCaseInsensitiveCompare("Fable") == .orderedSame,
+        let modelName = modelName(from: limit),
         let usedPercent = numeric(limit["percent"])
       else {
+        continue
+      }
+
+      // Fable keeps its dedicated scope constant so cached readings from
+      // earlier versions retain their identity across this change.
+      let isFable = modelName.localizedCaseInsensitiveCompare("Fable") == .orderedSame
+      let scope = isFable ? UsageScope.fable : UsageScope.modelScope(displayName: modelName)
+      guard let scope else {
+        continue
+      }
+      // First occurrence wins, so duplicate scope keys stay deterministic in
+      // payload order rather than depending on percent comparisons.
+      guard seenScopeKeys.insert(scope.key).inserted else {
         continue
       }
 
       let resetAt = resetDate(from: limit)
         ?? (payload["seven_day"] as? [String: Any]).flatMap(resetDate(from:))
         ?? now.addingTimeInterval(7 * 24 * 3600)
-      return PressureMath.window(
+      windows.append(PressureMath.window(
         provider: .claude,
         speed: .slow,
         usedPercent: usedPercent,
         resetAt: resetAt,
         limitWindowSeconds: 7 * 24 * 3600,
         now: now,
-        scope: .fable,
-        visualStyle: .outerStar
-      )
+        scope: scope,
+        visualStyle: isFable ? .outerStar : .menuRow
+      ))
     }
 
-    return nil
+    return windows
   }
 
   private static func usedPercent(from dict: [String: Any]) -> Double? {

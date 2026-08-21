@@ -112,6 +112,12 @@ omits the active scoped limit clears it. The marker size and radius are
 controlled by the same local Icon Settings slider surface as the other glyph
 geometry controls.
 
+Any further active `weekly_scoped` entries also parse from `limits[]` and
+surface as dropdown-only rows with their own reset time and countdown, so no
+active scoped usage is silently hidden; they draw nothing on the dial, and the
+star remains reserved for Fable pending the marker-style decision in the spec's
+open questions.
+
 ## Canonical Policy
 
 - A successful provider poll refreshes the last-good cache.

@@ -257,6 +257,52 @@ struct UsageResultCacheTests {
     #expect(cached.windows[0].id == "codex_slow")
   }
 
+  @Test("cached scoped menu rows survive failures with disclosed age")
+  func scopedMenuRowsSurviveFailuresWithDisclosedAge() {
+    let capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    var cache = UsageResultCache(persistenceURL: nil)
+    let resetAt = capturedAt.addingTimeInterval(7_200)
+    let fast = makeWindow(
+      provider: .claude,
+      speed: .fast,
+      usedPercent: 20,
+      resetAt: resetAt,
+      duration: 5 * 3_600,
+      now: capturedAt
+    )
+    let sonnet = PressureMath.window(
+      provider: .claude,
+      speed: .slow,
+      usedPercent: 41,
+      resetAt: resetAt,
+      limitWindowSeconds: 7 * 24 * 3_600,
+      now: capturedAt,
+      scope: UsageScope(kind: "model", key: "sonnet-pro", displayName: "Sonnet Pro"),
+      visualStyle: .menuRow
+    )
+    _ = cache.reconcile(
+      ProviderResult(
+        provider: .claude,
+        ok: true,
+        source: "live",
+        error: nil,
+        windows: [fast, sonnet]
+      ),
+      now: capturedAt
+    )
+
+    let cached = cache.reconcile(
+      .failure(.claude, source: "error", error: "usage fetch failed"),
+      now: capturedAt.addingTimeInterval(600)
+    )
+
+    #expect(cached.ok)
+    #expect(cached.cacheAgeSeconds == 600)
+    let cachedSonnet = cached.windows.first { $0.scope?.key == "sonnet-pro" }
+    #expect(cachedSonnet?.visualStyle == .menuRow)
+    #expect(cachedSonnet?.usedPercent == 41)
+  }
+
   private func makeWindow(
     provider: Provider,
     speed: WindowSpeed,

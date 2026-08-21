@@ -8,7 +8,7 @@ Hands are deconflicted on three axes:
 
 - **provider → color:** Codex is teal, Claude is coral.
 - **window → length:** the slow (weekly) window is a long hand; the fast (~5h) window is a short outer-band hand.
-- **scoped limit → marker:** active Claude Fable weekly usage appears as a four-pointed coral star on the outer edge. It follows the latest fresh Anthropic reading, and disappears when a later successful response no longer includes that active scoped limit.
+- **scoped limit → marker:** active Claude Fable weekly usage appears as a four-pointed coral star on the outer edge. It follows the latest fresh Anthropic reading, and disappears when a later successful response no longer includes that active scoped limit. Any other active scoped weekly limit surfaces as a dropdown-only row and stays off the dial; the star remains reserved for Fable.
 - **pressure → depth:** the most-constrained (highest-pressure) window draws on top, so the hand that matters most is in the foreground.
 
 So a long teal hand is Codex's weekly window when that is the Codex limit the API reports; a short coral hand is Claude's 5-hour window; a coral star is Claude's active Fable scoped weekly limit. Glideslope classifies Codex windows from their reported duration rather than assuming the API's `primary_window` is always five hours.

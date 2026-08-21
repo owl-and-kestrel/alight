@@ -29,6 +29,10 @@ enum WindowSpeed: String, Codable, Sendable {
 enum UsageVisualStyle: String, Codable, Sendable {
   case hand
   case outerStar
+  /// Dropdown-only rows for scoped limits beyond Fable. They draw nothing on
+  /// the dial: the four-pointed star remains the sole scoped marker until
+  /// marker styles for further scoped models are decided.
+  case menuRow
 }
 
 struct UsageScope: Codable, Hashable, Sendable {
@@ -37,6 +41,34 @@ struct UsageScope: Codable, Hashable, Sendable {
   let displayName: String
 
   static let fable = UsageScope(kind: "model", key: "fable", displayName: "Fable")
+
+  /// Deterministic scope identity for a provider-reported model name. Returns
+  /// nil for names without usable identity so callers fail closed instead of
+  /// colliding with an invented key.
+  static func modelScope(displayName rawName: String) -> UsageScope? {
+    let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else {
+      return nil
+    }
+    var slug = ""
+    var previousWasSeparator = true
+    for scalar in name.lowercased().unicodeScalars {
+      if CharacterSet.alphanumerics.contains(scalar) {
+        slug.unicodeScalars.append(scalar)
+        previousWasSeparator = false
+      } else if !previousWasSeparator {
+        slug.append("-")
+        previousWasSeparator = true
+      }
+    }
+    if slug.hasSuffix("-") {
+      slug.removeLast()
+    }
+    guard !slug.isEmpty else {
+      return nil
+    }
+    return UsageScope(kind: "model", key: slug, displayName: name)
+  }
 }
 
 enum PressureBand: String, Codable, Sendable {

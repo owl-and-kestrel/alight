@@ -303,7 +303,7 @@ final class StatusItemController {
 
   private func markerImage(for window: UsageWindow, style: GaugeIconStyle) -> NSImage {
     switch window.visualStyle {
-    case .hand:
+    case .hand, .menuRow:
       dotImage(color: window.band.nsColor)
     case .outerStar:
       starImage(color: GaugeIconRenderer.providerColor(window.provider, style: style))

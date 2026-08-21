@@ -110,6 +110,11 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
   Model-specific top-level buckets such as `seven_day_sonnet` and
   `seven_day_opus` were present but `null`, so scoped usage should come from
   `limits[]`, not from one-off top-level bucket fields.
+  Every other active `weekly_scoped` model entry parses into a dropdown-only
+  row with its own reset time and countdown; it draws nothing on the dial, so
+  no active scoped usage is silently hidden. Duplicate scope identities keep
+  the first payload occurrence, and entries without a model identity are
+  skipped rather than guessed.
 - **Read-only.** Glideslope never refreshes or rewrites the Keychain item, so it cannot invalidate the refresh token the Claude Code app depends on. An expired access token degrades to `token expired — open Claude Code to refresh`.
 - **Gentle polling.** The usage endpoint rate-limits aggressively, so Claude is polled on a five-minute cadence with exponential backoff on failure, decoupled from Codex's 60s loop. Manual Refresh forces a live Claude attempt. HTTP `429` responses use Anthropic's `Retry-After` header instead of the generic backoff, and scheduled/manual refreshes share one in-flight task.
 
@@ -206,5 +211,6 @@ Automatic sources are intentionally primary. Manual input exists only as a resil
 - Should thresholds be configurable per user?
 - Should reset times be displayed as wall-clock time, duration, or both?
 - Decided against Keychain write-back auto-refresh: updating the item via the `security` CLI can reset its ACL and lock Claude Code out of its own credential (this is why Astra stays read-only). The always-live path is instead a long-lived token from `claude setup-token` placed in the env/token-file.
-- Decide whether additional active Anthropic `limits[]` entries beyond Fable
-  need their own marker styles or dropdown-only rows.
+- Additional active Anthropic `limits[]` entries beyond Fable currently render
+  as dropdown-only rows with no dial marker. Whether any of them need their own
+  marker styles remains undecided.
