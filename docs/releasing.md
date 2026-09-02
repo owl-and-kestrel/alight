@@ -54,6 +54,10 @@ Migration state as of 2026-08-20:
   SHA-256 is `57071931c935733b67e864360fc36b57fd3ad805774257b77545c4feb9a80aee`.
   An identical retry replays the existing receipts rather than creating a
   second publication or announcement.
+- Stable `0.5.0` build `10` adds Antigravity usage tracking with purple hands;
+  its immutable archive SHA-256 is `6ba9ae2324c588f92735d2d11a6b40231cebb92b5227a283227056bfca3285fc`,
+  published on Spruce via `FileReleaseOrigin` under pointer CAS operation
+  `6af25941e0b960fab32ce8251d2629a313cab1bbc3c0a57890ed46575dd6b73c`.
 
 ## Sparkle Trust Authority
 
