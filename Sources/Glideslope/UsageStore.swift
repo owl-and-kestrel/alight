@@ -8,6 +8,7 @@ final class UsageStore {
 
   private let codex = CodexUsageClient()
   private let claude = ClaudeUsageClient()
+  private let antigravity = AntigravityUsageClient()
 
   var status = UsageStatus()
 
@@ -64,7 +65,9 @@ final class UsageStore {
     // Codex polls every cycle; copy the (Sendable) client into a local so we
     // don't send main-actor `self` across the concurrency boundary.
     let codex = self.codex
+    let antigravity = self.antigravity
     async let codexResult = codex.result(now: now)
+    async let antigravityResult = antigravity.result(now: now)
 
     // Poll Claude only when its gentle cadence/backoff allows.
     let claudeResult: ProviderResult
@@ -114,11 +117,12 @@ final class UsageStore {
 
     let reconciledCodex = resultCache.reconcile(await codexResult, now: now)
     let reconciledClaude = resultCache.reconcile(claudeResult, now: now)
+    let reconciledAntigravity = resultCache.reconcile(await antigravityResult, now: now)
     Self.logClaudeStatus(reconciledClaude, now: now)
 
     status = UsageStatus(
       generatedAt: now,
-      results: [reconciledCodex, reconciledClaude]
+      results: [reconciledCodex, reconciledClaude, reconciledAntigravity]
     )
   }
 

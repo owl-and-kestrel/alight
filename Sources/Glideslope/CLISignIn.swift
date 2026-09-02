@@ -8,6 +8,7 @@ enum CLISignIn {
     switch provider {
     case .codex: "codex login"
     case .claude: "claude auth login"
+    case .antigravity: "agy"
     }
   }
 

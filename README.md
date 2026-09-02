@@ -1,23 +1,23 @@
 # Glideslope
 
-Glideslope is a tiny macOS menu bar gauge for **Codex and Claude Code** usage pressure.
+Glideslope is a tiny macOS menu bar gauge for **Codex, Claude Code, and Antigravity** usage pressure.
 
-The dial is a dark circle with a dotted gauge scale, up to four hands, and optional scoped-limit markers. Hands are drawn as bold lines in **separate radial bands** (so they never swallow each other when their angles align): the long (weekly) window is a long line from the hub out past the tick marks, and the short (~5h) window is a short line in the outer band crossing the ticks (an emphasized tick). They are vivid against the dark face (with only a thin dark edge for separation) — the most dominant element. The scale recedes to small white dots; the only colored part of the scale is a **solid pure-red (`#FF0000`) redline arc on the hot end** — the side that actually matters.
+The dial is a dark circle with a dotted gauge scale, up to six hands, and optional scoped-limit markers. Hands are drawn as bold lines in **separate radial bands** (so they never swallow each other when their angles align): the long (weekly) window is a long line from the hub out past the tick marks, and the short (~5h) window is a short line in the outer band crossing the ticks (an emphasized tick). They are vivid against the dark face (with only a thin dark edge for separation) — the most dominant element. The scale recedes to small white dots; the only colored part of the scale is a **solid pure-red (`#FF0000`) redline arc on the hot end** — the side that actually matters.
 
 Hands are deconflicted on three axes:
 
-- **provider → color:** Codex is teal, Claude is coral.
+- **provider → color:** Codex is teal, Claude is coral, Antigravity is purple.
 - **window → length:** the slow (weekly) window is a long hand; the fast (~5h) window is a short outer-band hand.
-- **scoped limit → marker:** active Claude Fable weekly usage appears as a four-pointed coral star on the outer edge. It follows the latest fresh Anthropic reading, and disappears when a later successful response no longer includes that active scoped limit. Any other active scoped weekly limit surfaces as a dropdown-only row and stays off the dial; the star remains reserved for Fable.
+- **scoped limit → marker:** active Claude Fable weekly usage appears as a four-pointed coral star on the outer edge. It follows the latest fresh Anthropic reading, and disappears when a later successful response no longer includes that active scoped limit. Any other active scoped weekly limit (such as 3P model quotas in Antigravity) surfaces as a dropdown-only row and stays off the dial; the star remains reserved for Fable.
 - **pressure → depth:** the most-constrained (highest-pressure) window draws on top, so the hand that matters most is in the foreground.
 
-So a long teal hand is Codex's weekly window when that is the Codex limit the API reports; a short coral hand is Claude's 5-hour window; a coral star is Claude's active Fable scoped weekly limit. Glideslope classifies Codex windows from their reported duration rather than assuming the API's `primary_window` is always five hours.
+So a long teal hand is Codex's weekly window when that is the Codex limit the API reports; a short coral hand is Claude's 5-hour window; a long purple hand is Antigravity's weekly Gemini quota; a short purple hand is Antigravity's 5-hour Gemini quota; a coral star is Claude's active Fable scoped weekly limit.
 
-The open clock hands in the unused bottom arc show reset phase for every active broad limit without adding another dial face. They rotate clockwise through their complete window and return to 12 at reset. Seven ticks on the inner weekly track make each interval one day; five ticks on the outer 5h track make each interval one hour. A hand stops just inside its matching track, provider remains encoded by color, and a track appears only when that kind of limit exists. The complete time display sits behind the quota display, so quota hands and scoped markers remain visually dominant where they cross. Scoped limits such as Fable remain off the reset clock to keep it legible. The dropdown gives the exact local reset time and countdown for every displayed limit.
+The open clock hands in the unused bottom arc show reset phase for every active broad limit without adding another dial face. They rotate clockwise through their complete window and return to 12 at reset. Seven ticks on the inner weekly track make each interval one day; five ticks on the outer 5h track make each interval one hour. A hand stops just inside its matching track, provider remains encoded by color, and a track appears only when that kind of limit exists. The complete time display sits behind the quota display, so quota hands and scoped markers remain visually dominant where they cross. Scoped limits remain off the reset clock to keep it legible. The dropdown gives the exact local reset time and countdown for every displayed limit.
 
 The hands are pace-relative consumption meters. A hand pegged left means `0%` consumed, centered means exactly on the expected reset pace, and pegged right means `100%` consumed / `0%` remaining.
 
-When a provider isn't signed in (or its token has expired), the dropdown shows a **Sign in to …** item that launches that CLI's login flow in Terminal (`codex login` / `claude auth login`); after signing in, hit Refresh.
+When a provider isn't signed in (or its token has expired), the dropdown shows a **Sign in to …** item that launches that CLI's login flow in Terminal (`codex login` / `claude auth login` / `agy`); after signing in, hit Refresh.
 
 The menu groups windows by provider and uses a simple pressure color per window:
 
@@ -29,16 +29,17 @@ The **Icon Settings** submenu lets you tune the menu-bar glyph without editing
 code. Slider controls persist local point values for Fable star size/radius,
 short-window hand length/width/radius, weekly hand length/width/radius, scale dot
 size/radius, redline width, and hub dot size. Color choices for Codex, Claude,
-and the redline are persisted alongside them. Radius sliders are intentionally
+Antigravity, and the redline are persisted alongside them. Radius sliders are intentionally
 permissive: elements can be pushed off the dial and will only stop when the icon
 canvas itself clips them.
 
 The native app:
 
 - reads local Codex auth from `~/.codex/auth.json` and calls the ChatGPT usage endpoint Codex uses;
-- gets a Claude Code OAuth token and calls Anthropic's subscription usage endpoint (`/api/oauth/usage`), mapping the `five_hour` / `seven_day` windows onto the fast/slow hands and active Fable `limits[]` usage onto the outer-edge star.
+- gets a Claude Code OAuth token and calls Anthropic's subscription usage endpoint (`/api/oauth/usage`), mapping the `five_hour` / `seven_day` windows onto the fast/slow hands and active Fable `limits[]` usage onto the outer-edge star;
+- reads local Antigravity credentials and queries Google Cloud Code PA (`v1internal:retrieveUserQuotaSummary`), mapping the Gemini 5-hour and weekly limits to fast/slow purple hands and secondary model groups to dropdown menu rows.
 
-It never prints or stores either token. Each provider is polled independently, so one being unavailable never blocks the other. Glideslope persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary. Cached pressure is recalculated against the current clock instead of freezing at capture time.
+It never prints or stores credentials. Each provider is polled independently, so one being unavailable never blocks the others. Glideslope persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary. Cached pressure is recalculated against the current clock instead of freezing at capture time.
 
 ### Claude Code credential
 
@@ -62,6 +63,17 @@ When relying only on the Keychain, an expired access token degrades to `token ex
 Claude Desktop's always-populated plan display is not a supported alternate source. Desktop uses its own web session and organization usage route, while Glideslope uses the separate Claude Code OAuth credential. Glideslope deliberately does not borrow Desktop cookies or private app state.
 
 > Glideslope intentionally does not refresh or rewrite Claude Code's shared Keychain item. The durable credential path is a user-created `claude setup-token`; the durable display path is the explicitly aged, reset-bounded last-known cache.
+
+### Antigravity credential
+
+Antigravity credentials resolve in precedence order:
+
+1. **`ANTIGRAVITY_OAUTH_TOKEN`** (or `ANTIGRAVITY_TOKEN`, `GEMINI_CLI_OAUTH_TOKEN`) env var.
+2. **Token file** — `~/.glideslope/antigravity-token` (override with `GLIDESLOPE_ANTIGRAVITY_TOKEN_FILE`). First non-comment line.
+3. **Antigravity CLI token files** — `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.gemini/jetski-standalone-oauth-token`, or `~/.gemini/oauth_creds.json`.
+4. **Keychain** (macOS) — `gemini` generic password item containing a base64-encoded `go-keyring-base64` JSON token.
+
+When an access token expires, if a refresh token is present, Glideslope renews it in-memory against `https://oauth2.googleapis.com/token` without modifying local files or the Keychain. The quota summary URL can be overridden with `GLIDESLOPE_ANTIGRAVITY_USAGE_URL`.
 
 ### Release updates
 

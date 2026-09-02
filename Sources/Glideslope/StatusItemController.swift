@@ -176,6 +176,11 @@ final class StatusItemController {
       action: #selector(setClaudeColor(_:))
     ))
     settingsMenu.addItem(colorSubmenu(
+      title: "Antigravity Color",
+      current: AppSettings.antigravityColor,
+      action: #selector(setAntigravityColor(_:))
+    ))
+    settingsMenu.addItem(colorSubmenu(
       title: "Redline Color",
       current: AppSettings.redlineColor,
       action: #selector(setRedlineColor(_:))
@@ -248,6 +253,15 @@ final class StatusItemController {
       let color = GaugeColorChoice(rawValue: raw)
     else { return }
     AppSettings.claudeColor = color
+    applyIconSettingChange()
+  }
+
+  @objc private func setAntigravityColor(_ sender: NSMenuItem) {
+    guard
+      let raw = sender.representedObject as? String,
+      let color = GaugeColorChoice(rawValue: raw)
+    else { return }
+    AppSettings.antigravityColor = color
     applyIconSettingChange()
   }
 

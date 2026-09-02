@@ -1,19 +1,20 @@
 # Glideslope Spec
 
-Glideslope is a tiny macOS menu bar gauge for coding-agent usage-window pressure. It tracks **Codex** and **Claude Code** together.
+Glideslope is a tiny macOS menu bar gauge for coding-agent usage-window pressure. It tracks **Codex, Claude Code, and Antigravity** together.
 
 ## Purpose
 
-Both Codex and Claude Code expose usage remaining, but the signal is buried and raw percentages are hard to interpret. Glideslope turns each provider's current usage window into a pace reading: whether remaining usage is lower than, equal to, or higher than expected for this point in the window.
+Both Codex, Claude Code, and Antigravity expose usage remaining, but the signal is buried and raw percentages are hard to interpret. Glideslope turns each provider's current usage window into a pace reading: whether remaining usage is lower than, equal to, or higher than expected for this point in the window.
 
 The goal is one calm glance, not another dashboard.
 
 ## Providers
 
-Glideslope tracks two providers. Each contributes the windows its usage API currently reports; a provider may expose only one cadence:
+Glideslope tracks three providers. Each contributes the windows its usage API currently reports; a provider may expose only one cadence:
 
 - **Codex** — teal hands.
 - **Claude Code** — coral hands.
+- **Antigravity** — purple hands.
 
 Providers are polled independently; one being unavailable never blocks the other.
 
@@ -47,7 +48,7 @@ The tooltip/summary names the most constrained window across all providers: the 
 
 The native icon is the focus, and the hands are the focus of the icon — the most dominant element. The dial is a dark circle with a fine dotted scale (small white dots) on a square canvas so it never crops; the hands are large and vivid against the dark face. The only colored scale element is a solid bright-red redline arc on the hot end. The hands carry the identity:
 
-- **Provider → hand color.** Codex teal, Claude coral.
+- **Provider → hand color.** Codex teal, Claude coral, Antigravity purple.
 - **Window → radial band.** Both hands are bold lines. The long (weekly) window is a long line from a short tail through the hub out past the tick marks; the short (~5h) window is a short line in the outer band, from the edge inward past the ticks (an emphasized tick). The two bands keep the hands from swallowing each other when their angles align.
 - **Pressure → depth.** The most-constrained (highest-pressure) window draws last, so the hand that matters most sits in the foreground.
 - Each hand has only a thin dark edge (kept minimal so the bright fill dominates).
@@ -73,7 +74,7 @@ Each hand uses a pace-relative consumption scale: pegged left = `0%` consumed, c
 
 When a provider has no data its hands are simply omitted; the gauge degrades to whatever providers are available.
 
-When a provider needs credentials (not signed in, or token expired/rejected), the dropdown surfaces a **Sign in to …** action that launches that CLI's login in Terminal (`codex login` / `claude auth login`).
+When a provider needs credentials (not signed in, or token expired/rejected), the dropdown surfaces a **Sign in to …** action that launches that CLI's login in Terminal (`codex login` / `claude auth login` / `agy`).
 
 The dropdown groups windows under each provider:
 
@@ -117,6 +118,18 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
   skipped rather than guessed.
 - **Read-only.** Glideslope never refreshes or rewrites the Keychain item, so it cannot invalidate the refresh token the Claude Code app depends on. An expired access token degrades to `token expired — open Claude Code to refresh`.
 - **Gentle polling.** The usage endpoint rate-limits aggressively, so Claude is polled on a five-minute cadence with exponential backoff on failure, decoupled from Codex's 60s loop. Manual Refresh forces a live Claude attempt. HTTP `429` responses use Anthropic's `Retry-After` header instead of the generic backoff, and scheduled/manual refreshes share one in-flight task.
+
+### Antigravity
+
+- Resolve the OAuth access token in precedence order:
+  1. `ANTIGRAVITY_OAUTH_TOKEN` (or `ANTIGRAVITY_TOKEN`, `GEMINI_CLI_OAUTH_TOKEN`) env var.
+  2. Token file `~/.glideslope/antigravity-token` (override `GLIDESLOPE_ANTIGRAVITY_TOKEN_FILE`).
+  3. Local Antigravity CLI token files (`~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.gemini/jetski-standalone-oauth-token`, `~/.gemini/oauth_creds.json`).
+  4. The `gemini` Keychain item via `security find-generic-password -s gemini -w` (decodes `go-keyring-base64`).
+- Automatic in-memory token refresh: if an access token is expired and a refresh token is present, Glideslope renews it in-memory via `https://oauth2.googleapis.com/token` without rewriting Keychain or local files.
+- Call Google Cloud Code PA's `retrieveUserQuotaSummary` endpoint (`https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`, overridable via `GLIDESLOPE_ANTIGRAVITY_USAGE_URL`) with `Authorization: Bearer …` and `User-Agent: Antigravity/1.0`.
+- Map the primary Gemini group's `gemini-5h` bucket → fast purple hand and `gemini-weekly` bucket → slow purple hand. Each bucket provides `remainingFraction` and `resetTime`.
+- Any secondary model groups (such as 3P Claude and GPT models) surface as `.menuRow` scoped windows in the dropdown, keeping the dial clean and focused on primary capacity.
 
 ### Native last-known cache
 

@@ -7,12 +7,13 @@ import AppKit
 enum RenderHarness {
   static func run(outputPath: String) {
     let scenarios: [(String, UsageStatus)] = [
-      ("typical", sample(codexFast: nil, codexSlow: 55, claudeFast: 74, claudeSlow: 18)),
+      ("typical", sample(codexFast: nil, codexSlow: 55, claudeFast: 74, claudeSlow: 18, antigravityFast: 35, antigravitySlow: 60)),
       ("codex only", sample(codexFast: nil, codexSlow: 80, claudeFast: nil, claudeSlow: nil)),
       ("claude only", sample(codexFast: nil, codexSlow: nil, claudeFast: 60, claudeSlow: 30)),
-      ("fable scoped", sample(codexFast: nil, codexSlow: 45, claudeFast: 0, claudeSlow: 44, claudeFable: 78)),
-      ("aligned resets", sample(codexFast: nil, codexSlow: 34, claudeFast: 48, claudeSlow: 28, alignedResets: true)),
-      ("pegged", sample(codexFast: nil, codexSlow: 100, claudeFast: 50, claudeSlow: 0))
+      ("antigravity only", sample(codexFast: nil, codexSlow: nil, claudeFast: nil, claudeSlow: nil, antigravityFast: 72, antigravitySlow: 42)),
+      ("fable scoped", sample(codexFast: nil, codexSlow: 45, claudeFast: 0, claudeSlow: 44, claudeFable: 78, antigravityFast: 20, antigravitySlow: 50)),
+      ("aligned resets", sample(codexFast: nil, codexSlow: 34, claudeFast: 48, claudeSlow: 28, antigravityFast: 55, antigravitySlow: 38, alignedResets: true)),
+      ("pegged", sample(codexFast: nil, codexSlow: 100, claudeFast: 50, claudeSlow: 0, antigravityFast: 0, antigravitySlow: 100))
     ]
 
     let previewScale: CGFloat = 12
@@ -134,6 +135,8 @@ enum RenderHarness {
     claudeFast: Double?,
     claudeSlow: Double?,
     claudeFable: Double? = nil,
+    antigravityFast: Double? = nil,
+    antigravitySlow: Double? = nil,
     alignedResets: Bool = false
   ) -> UsageStatus {
     let now = Date()
@@ -164,6 +167,8 @@ enum RenderHarness {
     let codexSlowPhase = alignedResets ? 0.5 : 0.62
     let claudeFastPhase = alignedResets ? 0.5 : 0.78
     let claudeSlowPhase = alignedResets ? 0.5 : 0.45
+    let antigravityFastPhase = alignedResets ? 0.5 : 0.22
+    let antigravitySlowPhase = alignedResets ? 0.5 : 0.55
     let codexWindows = [
       win(.codex, .fast, codexFast, 5 * 3600, codexFastPhase),
       win(.codex, .slow, codexSlow, 7 * 24 * 3600, codexSlowPhase)
@@ -173,9 +178,14 @@ enum RenderHarness {
       win(.claude, .slow, claudeSlow, 7 * 24 * 3600, claudeSlowPhase),
       win(.claude, .slow, claudeFable, 7 * 24 * 3600, 0.5, scope: .fable, visualStyle: .outerStar)
     ].compactMap { $0 }
+    let antigravityWindows = [
+      win(.antigravity, .fast, antigravityFast, 5 * 3600, antigravityFastPhase),
+      win(.antigravity, .slow, antigravitySlow, 7 * 24 * 3600, antigravitySlowPhase)
+    ].compactMap { $0 }
     return UsageStatus(generatedAt: now, results: [
       ProviderResult(provider: .codex, ok: !codexWindows.isEmpty, source: "sample", error: codexWindows.isEmpty ? "sample" : nil, windows: codexWindows),
-      ProviderResult(provider: .claude, ok: !claudeWindows.isEmpty, source: "sample", error: claudeWindows.isEmpty ? "sample" : nil, windows: claudeWindows)
+      ProviderResult(provider: .claude, ok: !claudeWindows.isEmpty, source: "sample", error: claudeWindows.isEmpty ? "sample" : nil, windows: claudeWindows),
+      ProviderResult(provider: .antigravity, ok: !antigravityWindows.isEmpty, source: "sample", error: antigravityWindows.isEmpty ? "sample" : nil, windows: antigravityWindows)
     ])
   }
 }

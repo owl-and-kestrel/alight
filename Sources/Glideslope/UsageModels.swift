@@ -5,11 +5,13 @@ import Foundation
 enum Provider: String, Codable, CaseIterable, Sendable {
   case codex
   case claude
+  case antigravity
 
   var displayName: String {
     switch self {
     case .codex: "Codex"
     case .claude: "Claude"
+    case .antigravity: "Antigravity"
     }
   }
 }

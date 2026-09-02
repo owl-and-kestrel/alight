@@ -308,9 +308,17 @@ enum GaugeIconRenderer {
     let dy = sin(radians)
     let nx = -dy
     let ny = dx
-    // A fractional provider lane keeps coincident Codex/Claude resets visible
-    // as a two-color pair instead of letting the later draw erase one source.
-    let providerOffset: CGFloat = window.provider == .codex ? -0.28 : 0.28
+    // A fractional provider lane keeps coincident Codex/Claude/Antigravity resets
+    // visible as distinct lines instead of letting the later draw erase one source.
+    let providerOffset: CGFloat
+    switch window.provider {
+    case .codex:
+      providerOffset = -0.30
+    case .antigravity:
+      providerOffset = 0.0
+    case .claude:
+      providerOffset = 0.30
+    }
     let origin = NSPoint(
       x: center.x + nx * providerOffset,
       y: center.y + ny * providerOffset
@@ -384,6 +392,8 @@ enum GaugeIconRenderer {
       style.codexColor
     case .claude:
       style.claudeColor
+    case .antigravity:
+      style.antigravityColor
     }
   }
 

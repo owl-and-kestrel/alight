@@ -15,6 +15,7 @@ struct GaugeIconStyle {
   let hubSize: CGFloat
   let codexColor: NSColor
   let claudeColor: NSColor
+  let antigravityColor: NSColor
   let redlineColor: NSColor
 }
 
@@ -140,6 +141,7 @@ enum GaugeColorChoice: String, CaseIterable, Sendable {
 enum AppSettings {
   private static let codexColorKey = "codexColor"
   private static let claudeColorKey = "claudeColor"
+  private static let antigravityColorKey = "antigravityColor"
   private static let redlineColorKey = "redlineColor"
   private static let legacyFableStarScaleKey = "fableStarScale"
   private static let legacyHandScaleKey = "handScale"
@@ -148,6 +150,7 @@ enum AppSettings {
 
   static let defaultCodexColor = GaugeColorChoice.teal
   static let defaultClaudeColor = GaugeColorChoice.coral
+  static let defaultAntigravityColor = GaugeColorChoice.purple
   static let defaultRedlineColor = GaugeColorChoice.red
 
   static var iconStyle: GaugeIconStyle {
@@ -166,6 +169,7 @@ enum AppSettings {
       hubSize: CGFloat(value(for: .hubSize)),
       codexColor: codexColor.nsColor,
       claudeColor: claudeColor.nsColor,
+      antigravityColor: antigravityColor.nsColor,
       redlineColor: redlineColor.nsColor
     )
   }
@@ -200,6 +204,15 @@ enum AppSettings {
     }
   }
 
+  static var antigravityColor: GaugeColorChoice {
+    get {
+      color(forKey: antigravityColorKey, defaultValue: defaultAntigravityColor)
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: antigravityColorKey)
+    }
+  }
+
   static var redlineColor: GaugeColorChoice {
     get {
       color(forKey: redlineColorKey, defaultValue: defaultRedlineColor)
@@ -216,6 +229,7 @@ enum AppSettings {
     for key in [
       codexColorKey,
       claudeColorKey,
+      antigravityColorKey,
       redlineColorKey,
       legacyFableStarScaleKey,
       legacyHandScaleKey,
