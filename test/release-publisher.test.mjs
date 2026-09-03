@@ -20,7 +20,7 @@ async function fixture({ dirty = false, signed = false, mutate = (value) => valu
   const appcastSha = createHash("sha256").update(appcast).digest("hex");
   let payload = {
     schema: "ok.product-update.v1", appId: "glideslope", bundleId: "com.owlandkestrel.glideslope",
-    version: pkg.version, build: pkg.build, channel: "stable", downloadPageUrl: "https://owlandkestrel.com/apps/glideslope",
+    version: pkg.version, build: pkg.build, channel: "stable", publishedAt: new Date().toISOString(), downloadPageUrl: "https://owlandkestrel.com/apps/glideslope",
     updateFeed: { format: "sparkle.appcast.v2", url: "https://updates.owlandkestrel.com/glideslope/stable/appcast.xml", sha256: appcastSha },
     source: { repository: "https://github.com/owl-and-kestrel/glideslope.git", commit: "4bc7afebc8ccaaa02c26d404b7ec1f724951e41d", dirty, buildConfiguration: "release" },
     artifacts: [{ platform: "macos", url: artifactURL, sha256: zipSha, sizeBytes: zip.length }]

@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseProductUpdateManifest, verifySignedReleaseManifest } from "@owl-kestrel/hatch-contracts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const flags = new Set(process.argv.slice(2));
@@ -31,13 +32,13 @@ for (const required of [zipPath, appcastPath, manifestPath]) {
 
 const packageJSON = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const manifestDocument = JSON.parse(await readFile(manifestPath, "utf8"));
-const decoded = await decodeAndVerifyManifest(manifestDocument);
-const payload = decoded.payload;
 const version = String(packageJSON.version || "");
 const build = Number(packageJSON.build);
 if (!/^\d+(?:\.\d+){1,3}$/u.test(version) || !Number.isSafeInteger(build) || build <= 0) {
   throw new Error("package.json must contain a valid version and positive integer build.");
 }
+const decoded = await decodeAndVerifyManifest(manifestDocument, { version, build, channel });
+const payload = decoded.payload;
 validateManifest(payload, { version, build, channel });
 if (publish && payload.source.dirty && !allowDirty) throw new Error("Refusing to publish an artifact built from a dirty worktree.");
 if (publish && !decoded.signatureVerified && !allowUnsigned) throw new Error("Refusing to publish an unsigned release manifest.");
@@ -94,6 +95,7 @@ if (!publish) {
 throw new Error("Glideslope publication is frozen until the authenticated Nest release-origin client is installed; direct R2 writes are retired.");
 
 function validateManifest(value, expected) {
+  parseProductUpdateManifest(value);
   if (value.schema !== "ok.product-update.v1" || value.appId !== "glideslope" || value.bundleId !== "com.owlandkestrel.glideslope"
     || value.version !== expected.version || value.build !== expected.build || value.channel !== expected.channel) throw new Error("Release manifest identity does not match package metadata.");
   if (!value.source || value.source.repository !== "https://github.com/owl-and-kestrel/glideslope.git" || !/^[0-9a-f]{40}$/u.test(value.source.commit || "")
@@ -130,14 +132,55 @@ function validatedOrigin(value) {
   if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.username || url.password) throw new Error("Origins must use HTTPS or loopback HTTP without credentials.");
   return url;
 }
-async function decodeAndVerifyManifest(document) {
-  if (document.schema !== "ok.signed-manifest.v1") return { payload: document, signatureVerified: false };
+async function decodeAndVerifyManifest(document, expected) {
+  if (document.schema !== "ok.signed-manifest.v1") {
+    parseProductUpdateManifest(document);
+    return { payload: document, signatureVerified: false };
+  }
   if (document.publisher?.id !== "owl-kestrel" || document.publisher?.domain !== "owlandkestrel.com"
     || document.publisher?.keyId !== (process.env.OK_RELEASE_KEY_ID || "ok-release-p256-v1") || document.signature?.alg !== "ECDSA_P256_SHA256_DER") throw new Error("Signed release manifest has unexpected publisher metadata.");
-  const publicKeyPEM = await readReleasePublicKey(); const publicKey = createPublicKey(publicKeyPEM);
-  const payloadBytes = decodeBase64URL(document.signedPayload, "signedPayload"); const signatureBytes = decodeBase64URL(document.signature?.value, "signature");
-  if (!verify("sha256", payloadBytes, publicKey, signatureBytes)) throw new Error("Signed release manifest signature verification failed.");
-  return { payload: JSON.parse(payloadBytes.toString("utf8")), signatureVerified: true };
+  const publicKeyPEM = await readReleasePublicKey();
+  const publicKey = createPublicKey(publicKeyPEM);
+  const spkiDer = publicKey.export({ type: "spki", format: "der" });
+  const spkiSha256 = createHash("sha256").update(spkiDer).digest("hex");
+  const keyId = document.publisher.keyId;
+  const trustedPublishers = [{
+    id: "owl-kestrel",
+    domain: "owlandkestrel.com",
+    keyId,
+    algorithm: "ECDSA_P256_SHA256_DER",
+    publicKeyPem: publicKeyPEM
+  }];
+  const policy = {
+    productId: "glideslope",
+    appId: "glideslope",
+    packageId: "com.owlandkestrel.glideslope",
+    channel: expected.channel,
+    publisher: {
+      id: "owl-kestrel",
+      domain: "owlandkestrel.com",
+      allowedKeys: [{ keyId, publicKeySpkiSha256: spkiSha256 }]
+    },
+    executableTrust: { authority: "product-native", verifier: "sparkle-ed25519", keyId: "sparkle-glideslope-1" },
+    installer: { adapterId: "glideslope.sparkle.macos.v1", kind: "native-updater" },
+    allowedSourceRepositories: ["https://github.com/owl-and-kestrel/glideslope.git"],
+    sourceBuildConfigurations: ["release"],
+    allowedArtifactOrigins: [updateOrigin.origin],
+    allowedArtifactPathPrefixes: ["/glideslope/"],
+    allowedFeedOrigins: [updateOrigin.origin, okOrigin.origin],
+    allowedFeedFormats: ["sparkle.appcast.v2"],
+    allowedPlatforms: ["macos"],
+    requireCleanSource: !allowDirty,
+    requireExpiry: false,
+    maxArtifactBytes: 50 * 1024 * 1024,
+    allowLoopbackHttpForDevelopment: true
+  };
+  const verified = verifySignedReleaseManifest(document, {
+    trustedPublishers,
+    policy,
+    now: new Date()
+  });
+  return { payload: verified.payload, signatureVerified: true, verifiedManifest: verified };
 }
 async function readReleasePublicKey() {
   const direct = String(process.env.OK_RELEASE_PUBLIC_KEY_PEM || "").trim(); if (direct) return direct;

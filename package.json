@@ -39,5 +39,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@owl-kestrel/hatch-contracts": "0.3.2"
   }
 }
