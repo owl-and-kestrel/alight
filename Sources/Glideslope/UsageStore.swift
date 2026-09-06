@@ -144,9 +144,14 @@ final class UsageStore {
 struct UsageResultCache: Sendable {
   private var lastGood: [Provider: CachedUsageReading] = [:]
   private let persistenceURL: URL?
+  private let antigravitySourceIdentity: String
 
-  init(persistenceURL: URL? = UsageResultCache.defaultPersistenceURL) {
+  init(
+    persistenceURL: URL? = UsageResultCache.defaultPersistenceURL,
+    antigravitySourceIdentity: String = AntigravityUsageSource.cacheIdentity()
+  ) {
     self.persistenceURL = persistenceURL
+    self.antigravitySourceIdentity = antigravitySourceIdentity
     guard let persistenceURL else {
       return
     }
@@ -158,6 +163,11 @@ struct UsageResultCache: Sendable {
       }
       lastGood = document.readings.reduce(into: [:]) { result, entry in
         guard let provider = Provider(rawValue: entry.key) else {
+          return
+        }
+        // Legacy Antigravity readings lack provenance. Never relabel those, or
+        // a different endpoint's balance, as the current runtime's quota.
+        if provider == .antigravity, entry.value.sourceIdentity != antigravitySourceIdentity {
           return
         }
         result[provider] = entry.value
@@ -186,7 +196,11 @@ struct UsageResultCache: Sendable {
       // Reuse the latest successful response during deferred/transient cycles,
       // including scoped limits such as Fable. A later successful response that
       // omits a scoped limit naturally replaces the cache and clears the marker.
-      lastGood[result.provider] = CachedUsageReading(windows: result.windows, capturedAt: now)
+      lastGood[result.provider] = CachedUsageReading(
+        windows: result.windows,
+        capturedAt: now,
+        sourceIdentity: result.provider == .antigravity ? antigravitySourceIdentity : nil
+      )
       persist()
       return result
     }
@@ -302,6 +316,7 @@ private struct PersistedUsageCache: Codable, Sendable {
 private struct CachedUsageReading: Codable, Sendable {
   let windows: [UsageWindow]
   let capturedAt: Date
+  let sourceIdentity: String?
 }
 
 private extension JSONEncoder {

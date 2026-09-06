@@ -37,7 +37,7 @@ The native app:
 
 - reads local Codex auth from `~/.codex/auth.json` and calls the ChatGPT usage endpoint Codex uses;
 - gets a Claude Code OAuth token and calls Anthropic's subscription usage endpoint (`/api/oauth/usage`), mapping the `five_hour` / `seven_day` windows onto the fast/slow hands and active Fable `limits[]` usage onto the outer-edge star;
-- reads local Antigravity credentials and queries Google Cloud Code PA (`v1internal:retrieveUserQuotaSummary`), mapping the Gemini 5-hour and weekly limits to fast/slow purple hands and secondary model groups to dropdown menu rows.
+- reads local Antigravity credentials and queries the native Antigravity backend (`daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`), mapping the Gemini 5-hour and weekly limits to fast/slow purple hands and secondary model groups to dropdown menu rows.
 
 It never prints or stores credentials. Each provider is polled independently, so one being unavailable never blocks the others. Glideslope persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary. Cached pressure is recalculated against the current clock instead of freezing at capture time.
 
@@ -73,7 +73,7 @@ Antigravity credentials resolve in precedence order:
 3. **Antigravity CLI token files** — `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.gemini/jetski-standalone-oauth-token`, or `~/.gemini/oauth_creds.json`.
 4. **Keychain** (macOS) — `gemini` generic password item containing a base64-encoded `go-keyring-base64` JSON token.
 
-When an access token expires, if a refresh token is present, Glideslope renews it in-memory against `https://oauth2.googleapis.com/token` without modifying local files or the Keychain. The quota summary URL can be overridden with `GLIDESLOPE_ANTIGRAVITY_USAGE_URL`.
+When an access token expires, if a refresh token is present, Glideslope renews it in-memory against `https://oauth2.googleapis.com/token` without modifying local files or the Keychain. The quota summary URL can be overridden with `GLIDESLOPE_ANTIGRAVITY_USAGE_URL`. The default matches the native `agy` client; the unprefixed Code Assist host can report a different Gemini allowance for the same account. Antigravity cache entries carry a non-secret endpoint fingerprint. Version 0.5.1 discards older unbound or different-source Antigravity readings while preserving Codex and Claude cache data.
 
 ### Release updates
 

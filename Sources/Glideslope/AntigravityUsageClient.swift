@@ -63,9 +63,7 @@ struct AntigravityUsageClient: Sendable {
   }()
 
   private var usageURL: URL {
-    let raw = ProcessInfo.processInfo.environment["GLIDESLOPE_ANTIGRAVITY_USAGE_URL"]
-      ?? "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
-    return URL(string: raw) ?? URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!
+    AntigravityUsageSource.url()
   }
 
   func result(now: Date = Date()) async -> ProviderResult {
