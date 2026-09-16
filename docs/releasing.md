@@ -7,8 +7,8 @@ installed app's update-fetch or verification path.
 
 Current release identity:
 
-- app version: `0.4.1`
-- build: `9`
+- app version: `0.5.2` for the prepared temporary rename announcement
+- build: `12` (the latest published Glideslope build is `0.5.0` / `10`)
 - bundle identifier: `com.owlandkestrel.glideslope`
 - update channel: `stable`
 - Sparkle: exact version `2.9.4`
@@ -136,6 +136,24 @@ Update requests go only to the public HTTPS feed and archive URLs. They do not
 contain Codex or Claude credentials, usage readings, an O+K account, a Chirp
 credential, or a Plumage session.
 
+## Alight Rename Announcement
+
+Build `0.5.2` / `12` is prepared as a temporary Glideslope identity-preserving
+bridge. After Nest authorizes publication, it can arrive through the existing
+signed Glideslope feed because it retains
+`com.owlandkestrel.glideslope`, the historical feed, and the existing Sparkle
+Ed25519 key. On its first launch it presents **Download Alight**, which opens
+`https://owlandkestrel.com/apps/alight` for the user to install the reviewed
+Alight package. The bridge never invokes Sparkle with the Alight bundle and
+never copies credentials or local data.
+
+After installing Alight, the user runs `npm run migrate:data` from the Alight
+checkout to preview and explicitly apply the non-secret cache/settings
+migration. Existing Glideslope state remains available as recovery evidence.
+Remove this announcement build and its old-feed release after the first Alight
+release cycle is publicly verified; preserve all earlier immutable Glideslope
+archives, receipts, signatures, and the old feed for historical clients.
+
 ## Technical-Alpha Installation And Apple Transition
 
 The current technical alpha is ad-hoc signed, not Developer ID signed or
@@ -227,7 +245,7 @@ replace the freeze.
 
 There is no direct-storage recovery command. Restore or republish only through
 Nest's receipt-bound operation and exact pointer CAS. Until that client is
-installed, the current `0.4.1` build `9` feed remains fixed and no new release
+installed, the historical Glideslope feed remains fixed and no new release
 is authorized. Do not use Wrangler, raw filesystem mutation, or an R2 fallback
 to advance the channel.
 
@@ -260,7 +278,7 @@ failure remains safe.
 
 Before publication:
 
-- Confirm version `0.4.1`, build `9`, source commit, and intended clean tree.
+- Confirm version `0.5.2`, build `12`, source commit, and intended clean tree.
 - Confirm `codesign --verify --deep --strict dist/Glideslope.app` succeeds.
 - Confirm the packaged feed and archive signatures verify.
 - Install the ZIP on a separate Mac and test launch, usage-cache recovery,

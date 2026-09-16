@@ -27,5 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     controller = StatusItemController()
+    DispatchQueue.main.async {
+      GlideslopeRenameNotice.presentIfNeeded()
+    }
   }
 }

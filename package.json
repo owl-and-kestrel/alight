@@ -1,7 +1,7 @@
 {
   "name": "glideslope",
-  "version": "0.5.1",
-  "build": 11,
+  "version": "0.5.2",
+  "build": 12,
   "description": "A tiny native macOS menu bar gauge for Codex, Claude Code, and Antigravity usage pressure.",
   "type": "module",
   "license": "MIT",
