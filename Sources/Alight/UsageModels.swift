@@ -1,6 +1,6 @@
 import Foundation
 
-/// A usage backend Glideslope tracks. Each provider contributes a fast and a
+/// A usage backend Alight tracks. Each provider contributes a fast and a
 /// slow window, and is distinguished on the dial by hand color.
 enum Provider: String, Codable, CaseIterable, Sendable {
   case codex
@@ -284,7 +284,7 @@ struct UsageStatus: Sendable {
 
   var summary: String {
     guard let worst else {
-      return "Glideslope: usage unavailable"
+      return "Alight: usage unavailable"
     }
     let sourceSuffix = result(for: worst.provider)?.sourceLabel.map { " (\($0))" } ?? ""
     let reset = worst.resetCountdown(now: generatedAt)

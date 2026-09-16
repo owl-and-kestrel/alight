@@ -2,11 +2,11 @@ import Foundation
 
 /// Reads Antigravity credentials and polls Google Cloud Code PA's
 /// `retrieveUserQuotaSummary` endpoint, mapping the 5-hour and weekly Gemini
-/// windows onto Glideslope's fast/slow pace windows with purple hands.
+/// windows onto Alight's fast/slow pace windows with purple hands.
 ///
 /// Credential resolution follows a safe read-only pattern:
 /// 1. `ANTIGRAVITY_OAUTH_TOKEN` (or `ANTIGRAVITY_TOKEN`, `GEMINI_CLI_OAUTH_TOKEN`) env var.
-/// 2. Token file: `~/.glideslope/antigravity-token` (or `GLIDESLOPE_ANTIGRAVITY_TOKEN_FILE`).
+/// 2. Token file: `~/.alight/antigravity-token` (or `ALIGHT_ANTIGRAVITY_TOKEN_FILE`).
 /// 3. Antigravity / Gemini CLI token files (`~/.gemini/antigravity-cli/antigravity-oauth-token`,
 ///    `~/.gemini/jetski-standalone-oauth-token`, `~/.gemini/oauth_creds.json`).
 /// 4. macOS Keychain item: `gemini` (base64-encoded `go-keyring-base64` JSON blob).
@@ -194,12 +194,12 @@ struct AntigravityUsageClient: Sendable {
       }
     }
 
-    // 2) Dedicated Glideslope token file.
+    // 2) Dedicated Alight token file.
     let tokenFilePath: String
-    if let override = environment["GLIDESLOPE_ANTIGRAVITY_TOKEN_FILE"], !override.isEmpty {
+    if let override = environment["ALIGHT_ANTIGRAVITY_TOKEN_FILE"], !override.isEmpty {
       tokenFilePath = (override as NSString).expandingTildeInPath
     } else {
-      tokenFilePath = homeDirectory.appending(path: ".glideslope/antigravity-token").path
+      tokenFilePath = homeDirectory.appending(path: ".alight/antigravity-token").path
     }
     if let contents = readFile(tokenFilePath), let token = firstToken(in: contents) {
       return AntigravityCredential(accessToken: token, expiresAt: nil, refreshToken: nil)

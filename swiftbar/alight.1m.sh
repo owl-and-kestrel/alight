@@ -8,4 +8,4 @@ while [ -L "$SOURCE" ]; do
 done
 
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
-exec /usr/bin/env node "$SCRIPT_DIR/bin/glideslope.mjs" swiftbar
+exec /usr/bin/env node "$SCRIPT_DIR/bin/alight.mjs" swiftbar

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Glideslope
+@testable import Alight
 
 @Suite("Claude usage parser")
 struct ClaudeUsageParserTests {

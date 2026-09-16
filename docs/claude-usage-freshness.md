@@ -12,22 +12,31 @@ attempt, reconciled status, retry delay, cache age, window count, utilization,
 and reset distance; use `./script/build_and_run.sh --logs` for future runtime
 checks.
 
-The SwiftBar/Node CLI path has its own disk fallback at
-`~/.codex-usage-pressure/state.json`, but the native app does not read that file.
-For native freshness bugs, start with `Sources/Glideslope/ClaudeUsageClient.swift`
-and `Sources/Glideslope/UsageStore.swift`.
+The SwiftBar/Node CLI path stores its state at `~/.alight/state.json`. The
+former `~/.codex-usage-pressure/state.json` path is historical migration input;
+Alight does not read it as a runtime fallback.
+For native freshness bugs, start with `Sources/Alight/ClaudeUsageClient.swift`
+and `Sources/Alight/UsageStore.swift`.
 
 The native cache lives at
-`~/Library/Application Support/Glideslope/usage-cache.json`. It contains only
+`~/Library/Application Support/Alight/usage-cache.json`. It contains only
 derived usage windows and capture timestamps, is written mode `0600`, and never
 contains provider credentials. Cached pressure is recomputed on every refresh;
 each hand is removed when its own reset timestamp passes.
+
+During the Glideslope to Alight rename, choose **Import Settings** on Alight's
+first launch to copy valid native cache and allowlisted appearance settings
+before the status item starts, or choose **Start Fresh**. With Alight stopped,
+run `npm run migrate:data` for the preview-first command-line state migration.
+Destinations are never overwritten and old data remains in place as recovery
+evidence. Credential files are reported for manual mode-`0600` migration; the
+app and command never read, rewrite, or delete token bytes.
 
 ## Failure Mode Found
 
 The 2026-05-29 report showed `Claude (cached)` values that disagreed with the
 Claude plan-limits page. A direct redacted diagnostic found the native app had
-no `~/.glideslope/claude-token`, so it fell back to the Claude Code Keychain
+no `~/.alight/claude-token`, so it fell back to the Claude Code Keychain
 credential. Before Claude Code was reopened, that Keychain access token was
 expired. After Claude Code refreshed the Keychain item, `/api/oauth/usage` still
 returned HTTP 429 with `Retry-After`; retrying after that delay returned the live
@@ -53,21 +62,21 @@ credential plus Sign In action.
 Claude Desktop 1.19367.0 uses a different private path:
 `/api/organizations/{organization}/usage` through its authenticated Electron
 web session. It polls every five minutes with a 15-second timeout and preserves
-its in-memory plan-usage state when a fetch fails. Glideslope instead uses the
+its in-memory plan-usage state when a fetch fails. Alight instead uses the
 Claude Code OAuth credential and `/api/oauth/usage`.
 
 Desktop also writes `plan-usage-history.json`, but that file contains sampled
 percentages without reset timestamps and can stop updating while Desktop remains
-open. It cannot safely drive Glideslope's pace gauge. Do not read Desktop
+open. It cannot safely drive Alight's pace gauge. Do not read Desktop
 cookies, Chromium storage, or private in-process state, and do not piggyback its
 web session.
 
 ## Refresh Token Experiment
 
-On 2026-07-04, Glideslope showed no Claude hands because the shared
+On 2026-07-04, Alight showed no Claude hands because the shared
 `Claude Code-credentials` Keychain access token had expired on
 2026-06-17. The Keychain item still contained a refresh token, and
-`claude auth status` reported the account as logged in, but Glideslope does not
+`claude auth status` reported the account as logged in, but Alight does not
 use refresh tokens and therefore had zero windows to render.
 
 Raw refresh attempts against `https://api.anthropic.com/v1/oauth/token` using
@@ -78,15 +87,15 @@ The endpoint was not proven unsafe, but the request format is app-specific and
 should not be guessed in production code.
 
 Invoking Claude Code itself with a tiny non-interactive request refreshed the
-Keychain credential safely. On the next one-minute Glideslope credential retry,
+Keychain credential safely. On the next one-minute Alight credential retry,
 the app read the refreshed access token and `/api/oauth/usage` returned live
 windows again. This suggests the safest refresh strategy is to let Claude Code
-own refresh/write-back, while Glideslope remains a read-only observer.
+own refresh/write-back, while Alight remains a read-only observer.
 
 ## Additional Usage Factors
 
 A redacted live payload check on 2026-07-04 confirmed that `/api/oauth/usage`
-reports more than the two broad windows Glideslope currently renders. The
+reports more than the two broad windows Alight currently renders. The
 top-level `five_hour` and `seven_day` objects carry `utilization`,
 `used_dollars`, `remaining_dollars`, `limit_dollars`, and `resets_at`.
 
@@ -104,7 +113,7 @@ contained:
 
 So Anthropic does expose model/scoped usage such as Fable-only usage, but not
 through the older top-level `seven_day_*` object shape in this observed payload.
-Glideslope parses the active `weekly_scoped` Fable limit from `limits[]` and
+Alight parses the active `weekly_scoped` Fable limit from `limits[]` and
 renders it as a four-pointed star on the dial's outer edge plus a Claude
 dropdown row. The Fable marker is stored with the latest successful response so
 it does not flicker during deferred polls, but a later successful response that
@@ -122,12 +131,12 @@ open questions.
 
 - A successful provider poll refreshes the last-good cache.
 - Successful derived usage is persisted across app relaunches; credentials are
-  never persisted by Glideslope.
+  never persisted by Alight.
 - Availability, authentication, and last-known usage are separate signals. A
   credential failure keeps still-valid cached windows and also shows the
   provider's sign-in action and current error.
 - Credential failures should retry local credential reads quickly (currently
-  every minute), because Claude Code may refresh the Keychain outside Glideslope.
+  every minute), because Claude Code may refresh the Keychain outside Alight.
 - Do not implement direct refresh-token use unless the exact Claude Code OAuth
   refresh request shape and refresh-token rotation behavior have been validated.
 - HTTP 429 should respect the server's `Retry-After` header. Do not stretch a

@@ -1,7 +1,7 @@
 import AppKit
 @preconcurrency import Sparkle
 
-/// Owns Glideslope's single canonical software-update path.
+/// Owns Alight's single canonical software-update path.
 ///
 /// Sparkle verifies update archives with the Ed25519 public key embedded in the
 /// app bundle. That signature remains the update identity while alpha builds
@@ -15,7 +15,7 @@ final class AppUpdater: NSObject, @preconcurrency SPUStandardUserDriverDelegate 
     userDriverDelegate: self
   )
 
-  /// Glideslope has no Dock presence, so update alerts that need attention must
+  /// Alight has no Dock presence, so update alerts that need attention must
   /// temporarily promote the app instead of appearing silently behind another
   /// application. Fully automatic installs normally never take this path.
   var supportsGentleScheduledUpdateReminders: Bool {

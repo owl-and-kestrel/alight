@@ -1,16 +1,16 @@
-# Glideslope Spec
+# Alight Spec
 
-Glideslope is a tiny macOS menu bar gauge for coding-agent usage-window pressure. It tracks **Codex, Claude Code, and Antigravity** together.
+Alight is a tiny macOS menu bar gauge for coding-agent usage-window pressure. It tracks **Codex, Claude Code, and Antigravity** together.
 
 ## Purpose
 
-Both Codex, Claude Code, and Antigravity expose usage remaining, but the signal is buried and raw percentages are hard to interpret. Glideslope turns each provider's current usage window into a pace reading: whether remaining usage is lower than, equal to, or higher than expected for this point in the window.
+Both Codex, Claude Code, and Antigravity expose usage remaining, but the signal is buried and raw percentages are hard to interpret. Alight turns each provider's current usage window into a pace reading: whether remaining usage is lower than, equal to, or higher than expected for this point in the window.
 
 The goal is one calm glance, not another dashboard.
 
 ## Providers
 
-Glideslope tracks three providers. Each contributes the windows its usage API currently reports; a provider may expose only one cadence:
+Alight tracks three providers. Each contributes the windows its usage API currently reports; a provider may expose only one cadence:
 
 - **Codex** — teal hands.
 - **Claude Code** — coral hands.
@@ -100,12 +100,12 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
 
 ### Claude Code
 
-- Resolve the OAuth access token in precedence order: (1) `CLAUDE_CODE_OAUTH_TOKEN` env, (2) token file `~/.glideslope/claude-token` (override `GLIDESLOPE_CLAUDE_TOKEN_FILE`) — the reliable channel for a GUI/login-item app that doesn't inherit the shell env, (3) the `Claude Code-credentials` Keychain item via `security find-generic-password -s … -w` (mirrors Astra's `providers/cli.py`; shelling out avoids the ACL failure an unsigned app hits through the Security framework). For an always-live hand, `claude setup-token` mints a long-lived token for the env/file path.
-- Call Anthropic's subscription usage endpoint (`https://api.anthropic.com/api/oauth/usage`, overridable via `GLIDESLOPE_CLAUDE_USAGE_URL`) with `Authorization: Bearer …`.
+- Resolve the OAuth access token in precedence order: (1) `CLAUDE_CODE_OAUTH_TOKEN` env, (2) token file `~/.alight/claude-token` (override `ALIGHT_CLAUDE_TOKEN_FILE`) — the reliable channel for a GUI/login-item app that doesn't inherit the shell env, (3) the `Claude Code-credentials` Keychain item via `security find-generic-password -s … -w` (mirrors Astra's `providers/cli.py`; shelling out avoids the ACL failure an unsigned app hits through the Security framework). For an always-live hand, `claude setup-token` mints a long-lived token for the env/file path.
+- Call Anthropic's subscription usage endpoint (`https://api.anthropic.com/api/oauth/usage`, overridable via `ALIGHT_CLAUDE_USAGE_URL`) with `Authorization: Bearer …`.
 - Map `five_hour` → fast and `seven_day` → slow. Each window carries `utilization` (0–100 percent) and `resets_at` (ISO-8601); the decoder tolerates a few alternate field names but is pinned to this shape.
 - The response also includes a `limits` array with richer session/weekly/scoped
   entries. A 2026-07-04 live payload showed active `weekly_scoped` usage for
-  model `Fable`; Glideslope renders that scoped limit as a four-pointed star on
+  model `Fable`; Alight renders that scoped limit as a four-pointed star on
   the dial's outer edge and as a Claude dropdown row while the latest fresh
   successful response includes it.
   Model-specific top-level buckets such as `seven_day_sonnet` and
@@ -116,25 +116,25 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
   no active scoped usage is silently hidden. Duplicate scope identities keep
   the first payload occurrence, and entries without a model identity are
   skipped rather than guessed.
-- **Read-only.** Glideslope never refreshes or rewrites the Keychain item, so it cannot invalidate the refresh token the Claude Code app depends on. An expired access token degrades to `token expired — open Claude Code to refresh`.
+- **Read-only.** Alight never refreshes or rewrites the Keychain item, so it cannot invalidate the refresh token the Claude Code app depends on. An expired access token degrades to `token expired — open Claude Code to refresh`.
 - **Gentle polling.** The usage endpoint rate-limits aggressively, so Claude is polled on a five-minute cadence with exponential backoff on failure, decoupled from Codex's 60s loop. Manual Refresh forces a live Claude attempt. HTTP `429` responses use Anthropic's `Retry-After` header instead of the generic backoff, and scheduled/manual refreshes share one in-flight task.
 
 ### Antigravity
 
 - Resolve the OAuth access token in precedence order:
   1. `ANTIGRAVITY_OAUTH_TOKEN` (or `ANTIGRAVITY_TOKEN`, `GEMINI_CLI_OAUTH_TOKEN`) env var.
-  2. Token file `~/.glideslope/antigravity-token` (override `GLIDESLOPE_ANTIGRAVITY_TOKEN_FILE`).
+  2. Token file `~/.alight/antigravity-token` (override `ALIGHT_ANTIGRAVITY_TOKEN_FILE`).
   3. Local Antigravity CLI token files (`~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.gemini/jetski-standalone-oauth-token`, `~/.gemini/oauth_creds.json`).
   4. The `gemini` Keychain item via `security find-generic-password -s gemini -w` (decodes `go-keyring-base64`).
-- Automatic in-memory token refresh: if an access token is expired and a refresh token is present, Glideslope renews it in-memory via `https://oauth2.googleapis.com/token` without rewriting Keychain or local files.
-- Call Google Cloud Code PA's `retrieveUserQuotaSummary` endpoint (`https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`, overridable via `GLIDESLOPE_ANTIGRAVITY_USAGE_URL`) with `Authorization: Bearer …` and `User-Agent: Antigravity/1.0`.
+- Automatic in-memory token refresh: if an access token is expired and a refresh token is present, Alight renews it in-memory via `https://oauth2.googleapis.com/token` without rewriting Keychain or local files.
+- Call Google Cloud Code PA's `retrieveUserQuotaSummary` endpoint (`https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`, overridable via `ALIGHT_ANTIGRAVITY_USAGE_URL`) with `Authorization: Bearer …` and `User-Agent: Antigravity/1.0`.
 - Map the primary Gemini group's `gemini-5h` bucket → fast purple hand and `gemini-weekly` bucket → slow purple hand. Each bucket provides `remainingFraction` and `resetTime`.
 - Any secondary model groups (such as 3P Claude and GPT models) surface as `.menuRow` scoped windows in the dropdown, keeping the dial clean and focused on primary capacity.
 
 ### Native last-known cache
 
 - Persist derived usage windows and capture timestamps at
-  `~/Library/Application Support/Glideslope/usage-cache.json` with mode `0600`.
+  `~/Library/Application Support/Alight/usage-cache.json` with mode `0600`.
 - Never persist tokens, credential blobs, account ids, or raw provider responses.
 - A live failure does not erase still-valid last-known hands. The dropdown shows
   cache age, current error, and the auth action together.
@@ -147,8 +147,12 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
 
 Fallback sources (Codex):
 
-- Cached last-good response at `~/.codex-usage-pressure/state.json`
+- Cached last-good response at `~/.alight/state.json`
 - Manual state written by the local CLI
+
+The former `~/.codex-usage-pressure/state.json` location is a historical input
+to the explicit rename migration command. Alight never reads it as a runtime
+fallback.
 
 Automatic sources are intentionally primary. Manual input exists only as a resilience path.
 
@@ -176,17 +180,18 @@ Automatic sources are intentionally primary. Manual input exists only as a resil
 
 ## Release Update Channel
 
-- `package.json` is the version and monotonic-build authority. The current
-  release identity is version `0.4.0`, build `8`, and bundle identifier
-  `com.owlandkestrel.glideslope`.
+- `package.json` is the version and monotonic-build authority. The prepared
+  Alight release identity is version `0.6.0`, build `13`, and bundle identifier
+  `com.owlandkestrel.alight`.
 - The native app embeds exact Sparkle version `2.9.4`. Its executable update
   authority is the Ed25519 public key committed at
   `config/sparkle-ed25519.pub`; the private key never enters the repo, app, feed,
   archive, or log.
-- The stable feed is
-  `https://updates.owlandkestrel.com/glideslope/stable/appcast.xml`, served with
+- The prepared stable feed is
+  `https://updates.owlandkestrel.com/alight/stable/appcast.xml`, served with
   immutable content-addressed archives from dedicated Cloudflare R2 bucket
-  `ok-release-artifacts`. Plumage and O+K Trust are not feed dependencies.
+  `ok-release-artifacts`. The Alight feed remains pending the coordinated Nest
+  project cutover; Plumage and O+K Trust are not feed dependencies.
 - Release builds enable automatic checks and installation by default. The menu
   item **Install Updates Automatically** opts out of automatic installation but
   does not disable scheduled checks. Manual **Check for Updates…** remains

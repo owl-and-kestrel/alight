@@ -6,6 +6,10 @@ FRAMEWORKS_DIR="$DEVELOPER_DIR/Library/Developer/Frameworks"
 DEVELOPER_LIB_DIR="$DEVELOPER_DIR/Library/Developer/usr/lib"
 
 if [[ ! -d "$FRAMEWORKS_DIR/Testing.framework/Modules/Testing.swiftmodule" ]]; then
+  # The standalone Command Line Tools include the Swift Testing runtime and
+  # macros, but on some macOS releases omit its Swift module. Use the local
+  # macOS platform framework from the installed Xcode as a module source while
+  # retaining the Command Line Tools compiler and SDK (no license check).
   XCODE_TESTING_FRAMEWORKS="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks"
   if [[ -d "$XCODE_TESTING_FRAMEWORKS/Testing.framework/Modules/Testing.swiftmodule" ]]; then
     FRAMEWORKS_DIR="$XCODE_TESTING_FRAMEWORKS"

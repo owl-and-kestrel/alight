@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Glideslope
+@testable import Alight
 
 @Suite("Antigravity credential resolution")
 struct AntigravityCredentialResolutionTests {
@@ -11,7 +11,7 @@ struct AntigravityCredentialResolutionTests {
     let credential = try await AntigravityUsageClient.resolveCredential(
       environment: [
         "ANTIGRAVITY_OAUTH_TOKEN": "  environment-token  ",
-        "GLIDESLOPE_ANTIGRAVITY_TOKEN_FILE": "/nonsecret/token"
+        "ALIGHT_ANTIGRAVITY_TOKEN_FILE": "/nonsecret/token"
       ],
       homeDirectory: home,
       readFile: { _ in Issue.record("file should not be read"); return nil },
@@ -25,7 +25,7 @@ struct AntigravityCredentialResolutionTests {
   @Test("first non-comment file token wins before CLI files and Keychain")
   func fileWins() async throws {
     let credential = try await AntigravityUsageClient.resolveCredential(
-      environment: ["GLIDESLOPE_ANTIGRAVITY_TOKEN_FILE": "/nonsecret/token"],
+      environment: ["ALIGHT_ANTIGRAVITY_TOKEN_FILE": "/nonsecret/token"],
       homeDirectory: home,
       readFile: { path in
         #expect(path == "/nonsecret/token")
@@ -44,7 +44,7 @@ struct AntigravityCredentialResolutionTests {
       environment: [:],
       homeDirectory: home,
       readFile: { path in
-        if path == "/nonsecret/test-home/.glideslope/antigravity-token" {
+        if path == "/nonsecret/test-home/.alight/antigravity-token" {
           return "default-file-token\n"
         }
         return nil

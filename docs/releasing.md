@@ -1,19 +1,30 @@
-# Glideslope Release Channel
+# Alight Release Channel
 
-Glideslope uses Sparkle as its executable update authority and an O+K-owned
+Alight uses Sparkle as its executable update authority and an O+K-owned
 HTTPS release origin as its stable distribution boundary. Plumage, O+K
 Release/Trust, and Chirp may describe or announce a release, but none is in the
 installed app's update-fetch or verification path.
 
 Current release identity:
 
-- app version: `0.5.2` for the prepared temporary rename announcement
-- build: `12` (the latest published Glideslope build is `0.5.0` / `10`)
-- bundle identifier: `com.owlandkestrel.glideslope`
+- app version: `0.6.0`
+- build: `13`
+- product/app id: `alight`
+- bundle identifier: `com.owlandkestrel.alight`
 - update channel: `stable`
 - Sparkle: exact version `2.9.4`
-- feed: `https://updates.owlandkestrel.com/glideslope/stable/appcast.xml`
+- feed: `https://updates.owlandkestrel.com/alight/stable/appcast.xml`
 - storage authority: Nest release origin on Spruce
+
+This source rename is prepared for a coordinated remote cutover. The current
+Nest project, release ledger records, and installed applications still use the
+historical `glideslope` identity until the owner executes the cutover. Nest
+source is currently `ssh://git@5.161.252.182/srv/git/glideslope.git`; the target
+source remote is `ssh://git@5.161.252.182/srv/git/alight.git`. Nest must create
+or rename the project identity to `alight`, register the new app id and bundle
+id, and grant the release-origin operation access before any Alight
+publication. This repository does not change Nest state, credentials, or the
+existing feed.
 
 `package.json` is the version and monotonic-build authority. Release bundle
 generation embeds both values, the stable feed URL, and the Sparkle public key
@@ -24,13 +35,13 @@ in `Info.plist`.
 The public object layout is:
 
 ```text
-glideslope/
+alight/
     ├── stable/
     │   └── appcast.xml
     └── releases/
         └── v<version>/
             └── <sha256>/
-                └── Glideslope.zip
+                └── Alight.zip
 ```
 
 Release archives are content-addressed and immutable. Never replace the bytes
@@ -46,7 +57,7 @@ Migration state as of 2026-08-20:
   range responses, cache policy, and MIME types pass direct-origin replay;
 - direct R2 publication is retired and channel advancement is frozen until the
   authenticated Nest release-origin client replaces it;
-- Chirp channel `glideslope-updates` exists and is active. Initialization
+- Historical Chirp channel `glideslope-updates` exists and is active. Initialization
   record: `msg_2dbcb564d6a24859bebe0323be04a343`.
 - Stable `0.4.1` build `9` is recorded in the O+K release ledger as publication
   `rpub_6b174f80-1c62-4f01-bdfa-84d9c88541d5`; its release announcement is
@@ -58,6 +69,14 @@ Migration state as of 2026-08-20:
   its immutable archive SHA-256 is `6ba9ae2324c588f92735d2d11a6b40231cebb92b5227a283227056bfca3285fc`,
   published on Spruce via `FileReleaseOrigin` under pointer CAS operation
   `6af25941e0b960fab32ce8251d2629a313cab1bbc3c0a57890ed46575dd6b73c`.
+
+Historical Glideslope release objects remain immutable under the old
+`/glideslope/` prefix. Their receipt ids, archive bytes, Sparkle signatures,
+and the old `com.owlandkestrel.glideslope` identity are evidence for the prior
+product and must not be rewritten. The established Sparkle trust key id
+`sparkle-glideslope-1` and its key bytes remain unchanged. The first Alight archive uses the new
+`/alight/` prefix and receives a new publication receipt after Nest validates
+the rename. The Sparkle Ed25519 key and O+K provenance key remain unchanged.
 
 ## Sparkle Trust Authority
 
@@ -86,7 +105,7 @@ Create or refresh that export without displaying the secret:
 ```sh
 install -d -m 700 ~/.config/owl-kestrel/secrets
 umask 077
-key_export="$(mktemp -t glideslope-sparkle-key)"
+key_export="$(mktemp -t alight-sparkle-key)"
 trap 'rm -f "$key_export"' EXIT
 security find-generic-password \
   -s https://sparkle-project.org \
@@ -112,7 +131,7 @@ Release builds default to automatic update checks, downloads, and installation.
 They embed these relevant Sparkle fields:
 
 ```text
-SUFeedURL=https://updates.owlandkestrel.com/glideslope/stable/appcast.xml
+SUFeedURL=https://updates.owlandkestrel.com/alight/stable/appcast.xml
 SUPublicEDKey=<contents of config/sparkle-ed25519.pub>
 SUEnableAutomaticChecks=true
 SUAutomaticallyUpdate=true
@@ -136,23 +155,36 @@ Update requests go only to the public HTTPS feed and archive URLs. They do not
 contain Codex or Claude credentials, usage readings, an O+K account, a Chirp
 credential, or a Plumage session.
 
-## Alight Rename Announcement
+### Rename cutover and local data
 
-Build `0.5.2` / `12` is prepared as a temporary Glideslope identity-preserving
-bridge. After Nest authorizes publication, it can arrive through the existing
-signed Glideslope feed because it retains
-`com.owlandkestrel.glideslope`, the historical feed, and the existing Sparkle
-Ed25519 key. On its first launch it presents **Download Alight**, which opens
-`https://owlandkestrel.com/apps/alight` for the user to install the reviewed
-Alight package. The bridge never invokes Sparkle with the Alight bundle and
-never copies credentials or local data.
+Because the bundle identifier changes, an installed Glideslope app cannot
+silently become Alight through the new feed. Install the reviewed Alight bridge
+package manually. On its first launch, Alight shows a one-time notice when it
+finds legacy non-secret state. Choose **Import Settings** to copy the valid
+native cache and allowlisted appearance settings before the status item starts,
+or choose **Start Fresh**. The destination is never overwritten and the old
+cache/domain remains as recovery evidence. For command-line state, quit Alight
+and run `npm run migrate:data`; that command previews by default and requires
+`--apply` to copy valid CLI state. UserDefaults settings are migrated only by
+the native Import Settings choice, which applies an allowlist before launch.
+Choosing **Later** leaves the prompt available on the next launch.
 
-After installing Alight, the user runs `npm run migrate:data` from the Alight
-checkout to preview and explicitly apply the non-secret cache/settings
-migration. Existing Glideslope state remains available as recovery evidence.
-Remove this announcement build and its old-feed release after the first Alight
-release cycle is publicly verified; preserve all earlier immutable Glideslope
-archives, receipts, signatures, and the old feed for historical clients.
+Dedicated token files are user-managed credentials. The migration command never
+reads or copies token bytes; it reports the old and new paths so the owner can
+copy them with mode `0600` during the reviewed cutover. Shared Claude and Gemini
+Keychain items retain their provider-owned identities and are read only. Remove
+the migration command after one completed Alight release cycle and verified
+user migration; until then, it is the only supported old-path migration tool.
+
+This manual bridge is required by Sparkle's installer contract, not just by the
+feed layout. In the pinned Sparkle 2.9.4 source checkout (after dependency
+resolution), the installer compares the incoming app's
+`CFBundleIdentifier` with the running host before installation and rejects a
+mismatch (`.build/checkouts/Sparkle/Autoupdate/SUInstaller.m` and
+`AppInstaller.m`). Since the old host is
+`com.owlandkestrel.glideslope` and Alight is
+`com.owlandkestrel.alight`, no Alight archive is advertised as an automatic
+upgrade for an existing Glideslope installation.
 
 ## Technical-Alpha Installation And Apple Transition
 
@@ -168,7 +200,7 @@ carry them forward automatically.
 
 When an Apple Developer account becomes available, keep all of these stable:
 
-- bundle identifier `com.owlandkestrel.glideslope`
+- bundle identifier `com.owlandkestrel.alight`
 - `SUFeedURL`
 - Sparkle Ed25519 key
 
@@ -192,7 +224,7 @@ npm run build:native
 Set release notes and package the current version:
 
 ```sh
-GLIDESLOPE_RELEASE_NOTES="Describe the user-visible changes." \
+ALIGHT_RELEASE_NOTES="Describe the user-visible changes." \
   npm run package:release
 ```
 
@@ -201,12 +233,12 @@ ad-hoc signature, signs the archive and appcast with Sparkle's Ed25519 key, and
 then verifies both signatures. Expected outputs:
 
 ```text
-dist/release/Glideslope.zip
-dist/release/Glideslope.zip.sha256
+dist/release/Alight.zip
+dist/release/Alight.zip.sha256
 dist/release/appcast.xml
-dist/release/Glideslope.md
-dist/release/glideslope-update.payload.json
-dist/release/glideslope-update.json
+dist/release/Alight.md
+dist/release/alight-update.payload.json
+dist/release/alight-update.json
 dist/release/RELEASE_NOTES.txt
 ```
 
@@ -253,13 +285,15 @@ to advance the channel.
 
 The complete order is an invariant:
 
-1. Stage and commit the immutable archive through Nest.
-2. Read it back and verify SHA-256.
-3. Advance `stable/appcast.xml` through exact pointer CAS last.
-4. Read it back and verify the signed feed, enclosure URL, and build.
-5. Publish the signed envelope to O+K's append-only Release/Trust ledger.
-6. Emit the deduplicated `product.release_available` event to Chirp channel
-   `glideslope-updates`.
+1. Register the Alight project/app/bundle identity in Nest and reconcile the
+   reviewed source repository and branch.
+2. Stage and commit the immutable archive through Nest.
+3. Read it back and verify SHA-256.
+4. Advance `stable/appcast.xml` through exact pointer CAS last.
+5. Read it back and verify the signed feed, enclosure URL, and build.
+6. Publish the signed envelope to O+K's append-only Release/Trust ledger.
+7. Emit the deduplicated `product.release_available` event to the registered
+   Alight Chirp channel.
 
 Release/Trust is useful provenance and catalog metadata, but it is not the
 updater's source of truth. Moving auth into Plumage must not change or proxy the
@@ -278,8 +312,8 @@ failure remains safe.
 
 Before publication:
 
-- Confirm version `0.5.2`, build `12`, source commit, and intended clean tree.
-- Confirm `codesign --verify --deep --strict dist/Glideslope.app` succeeds.
+- Confirm version `0.6.0`, build `13`, source commit, and intended clean tree.
+- Confirm `codesign --verify --deep --strict dist/Alight.app` succeeds.
 - Confirm the packaged feed and archive signatures verify.
 - Install the ZIP on a separate Mac and test launch, usage-cache recovery,
   **Check for Updates…**, and the automatic-install opt-out.
@@ -288,11 +322,11 @@ Before publication:
 
 After publication:
 
-- Check from the previous Sparkle-enabled version and confirm automatic update.
+- Check from the manually installed Alight bridge and confirm automatic update.
 - Confirm opting out of **Install Updates Automatically** preserves scheduled
   update checks.
 - Read the Release/Trust channel and confirm version, artifact URL, and digest.
-- Read `glideslope-updates` and confirm exactly one release event.
+- Read `alight-updates` and confirm exactly one release event.
 
 If a release must be withdrawn, remove or replace the mutable appcast entry and
 revoke/unpublish its Trust projection. Keep the append-only release publication

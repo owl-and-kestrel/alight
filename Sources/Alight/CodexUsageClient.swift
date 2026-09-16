@@ -1,7 +1,7 @@
 import Foundation
 
 /// Reads local Codex auth and polls the ChatGPT usage endpoint Codex uses,
-/// then maps the primary/secondary rate-limit windows onto Glideslope's
+/// then maps the primary/secondary rate-limit windows onto Alight's
 /// fast/slow pace windows. Never prints or caches the auth token.
 struct CodexUsageClient: Sendable {
   private let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
@@ -27,7 +27,7 @@ struct CodexUsageClient: Sendable {
     var request = URLRequest(url: usageURL)
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Accept")
-    request.setValue("Glideslope/0.3", forHTTPHeaderField: "User-Agent")
+    request.setValue("Alight/0.3", forHTTPHeaderField: "User-Agent")
     if let accountId = auth.tokens?.accountId, !accountId.isEmpty {
       request.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
     }

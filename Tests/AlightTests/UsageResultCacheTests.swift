@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Glideslope
+@testable import Alight
 
 @Suite("Usage result cache")
 struct UsageResultCacheTests {
@@ -323,6 +323,6 @@ struct UsageResultCacheTests {
 
   private func temporaryDirectory() -> URL {
     FileManager.default.temporaryDirectory
-      .appending(path: "glideslope-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+      .appending(path: "alight-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
   }
 }

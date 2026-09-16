@@ -9,7 +9,7 @@ enum AntigravityUsageSource {
   )!
 
   static func url(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-    let raw = environment["GLIDESLOPE_ANTIGRAVITY_USAGE_URL"] ?? defaultURL.absoluteString
+    let raw = environment["ALIGHT_ANTIGRAVITY_USAGE_URL"] ?? defaultURL.absoluteString
     return URL(string: raw) ?? defaultURL
   }
 

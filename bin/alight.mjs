@@ -5,17 +5,17 @@ import os from "node:os";
 import path from "node:path";
 
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
-const DEFAULT_STATE_PATH = path.join(os.homedir(), ".codex-usage-pressure", "state.json");
+const DEFAULT_STATE_PATH = path.join(os.homedir(), ".alight", "state.json");
 const DEFAULT_AUTH_PATH = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "auth.json");
 
 function usage() {
   return `Usage:
-  glideslope status [--json] [--no-fetch] [--state PATH] [--auth PATH]
-  glideslope swiftbar [--no-fetch] [--state PATH] [--auth PATH]
-  glideslope manual --primary-used PCT --primary-reset-at UNIX [--weekly-used PCT --weekly-reset-at UNIX]
+  alight status [--json] [--no-fetch] [--state PATH] [--auth PATH]
+  alight swiftbar [--no-fetch] [--state PATH] [--auth PATH]
+  alight manual --primary-used PCT --primary-reset-at UNIX [--weekly-used PCT --weekly-reset-at UNIX]
 
 The automatic path reads Codex auth from ~/.codex/auth.json and fetches ${USAGE_URL}.
-Manual values are a fallback only; they are written to ~/.codex-usage-pressure/state.json by default.`;
+Manual values are written to ~/.alight/state.json by default.`;
 }
 
 function parseArgs(argv) {
@@ -122,7 +122,7 @@ async function fetchUsage(authPath) {
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
-    "User-Agent": "CodexUsagePressure/0.1",
+    "User-Agent": "Alight/0.3",
   };
   if (accountId) headers["ChatGPT-Account-Id"] = accountId;
 
@@ -221,7 +221,7 @@ function renderSwiftBar(status) {
   const worst = status.worst;
   const sign = worst.pressure_percent > 0 ? "+" : "";
   const stale = status.source === "live" ? "" : " cached";
-  console.log(`Glideslope ${sign}${formatPercent(worst.pressure_percent, 0)}${stale}`);
+  console.log(`Alight ${sign}${formatPercent(worst.pressure_percent, 0)}${stale}`);
   console.log("---");
   for (const window of status.windows) {
     const windowSign = window.pressure_percent > 0 ? "+" : "";

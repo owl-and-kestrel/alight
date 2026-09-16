@@ -7,10 +7,10 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const cli = path.resolve("bin/glideslope.mjs");
+const cli = path.resolve("bin/alight.mjs");
 
 test("manual state can be rendered without fetching", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "glideslope-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "alight-"));
   const state = path.join(dir, "state.json");
   const resetAt = Math.floor(Date.now() / 1000) + 3600;
 
@@ -32,12 +32,12 @@ test("manual state can be rendered without fetching", async () => {
   assert.equal(manualStatus.windows[0].label, "5h");
 
   const swiftbar = await execFileAsync(process.execPath, [cli, "swiftbar", "--state", state, "--no-fetch"]);
-  assert.match(swiftbar.stdout, /^Glideslope /);
+  assert.match(swiftbar.stdout, /^Alight /);
   assert.match(swiftbar.stdout, /5h:/);
 });
 
 test("weekly-only Codex primary window is labeled from its duration", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "glideslope-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "alight-"));
   const state = path.join(dir, "state.json");
   const resetAt = Math.floor(Date.now() / 1000) + 6 * 24 * 3600;
   fs.writeFileSync(state, JSON.stringify({
@@ -62,7 +62,7 @@ test("weekly-only Codex primary window is labeled from its duration", async () =
 });
 
 test("Codex windows without an authoritative duration are ignored", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "glideslope-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "alight-"));
   const state = path.join(dir, "state.json");
   fs.writeFileSync(state, JSON.stringify({
     payload: {

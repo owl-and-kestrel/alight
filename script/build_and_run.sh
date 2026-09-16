@@ -2,15 +2,15 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="Glideslope"
-BUNDLE_ID="com.owlandkestrel.glideslope"
+APP_NAME="Alight"
+BUNDLE_ID="com.owlandkestrel.alight"
 MIN_SYSTEM_VERSION="14.0"
-UPDATE_CHANNEL="${GLIDESLOPE_UPDATE_CHANNEL:-stable}"
-SPARKLE_FEED_URL="${GLIDESLOPE_SPARKLE_FEED_URL:-https://updates.owlandkestrel.com/glideslope/$UPDATE_CHANNEL/appcast.xml}"
-BUILD_CONFIGURATION="${GLIDESLOPE_BUILD_CONFIGURATION:-debug}"
+UPDATE_CHANNEL="${ALIGHT_UPDATE_CHANNEL:-stable}"
+SPARKLE_FEED_URL="${ALIGHT_SPARKLE_FEED_URL:-https://updates.owlandkestrel.com/alight/$UPDATE_CHANNEL/appcast.xml}"
+BUILD_CONFIGURATION="${ALIGHT_BUILD_CONFIGURATION:-debug}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SPARKLE_PUBLIC_KEY_FILE="${GLIDESLOPE_SPARKLE_PUBLIC_KEY_FILE:-$ROOT_DIR/config/sparkle-ed25519.pub}"
+SPARKLE_PUBLIC_KEY_FILE="${ALIGHT_SPARKLE_PUBLIC_KEY_FILE:-$ROOT_DIR/config/sparkle-ed25519.pub}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
@@ -22,11 +22,11 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 cd "$ROOT_DIR"
 
 if [[ ! "$UPDATE_CHANNEL" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]; then
-  echo "GLIDESLOPE_UPDATE_CHANNEL contains an invalid channel slug." >&2
+  echo "ALIGHT_UPDATE_CHANNEL contains an invalid channel slug." >&2
   exit 2
 fi
 if [[ ! "$SPARKLE_FEED_URL" =~ ^https://[A-Za-z0-9./:_-]+$ ]]; then
-  echo "GLIDESLOPE_SPARKLE_FEED_URL must be a simple HTTPS URL without credentials or query parameters." >&2
+  echo "ALIGHT_SPARKLE_FEED_URL must be a simple HTTPS URL without credentials or query parameters." >&2
   exit 2
 fi
 if [[ ! -f "$SPARKLE_PUBLIC_KEY_FILE" ]]; then
@@ -45,7 +45,7 @@ if [[ ! "$VERSION" =~ ^[0-9]+([.][0-9]+){1,3}$ ]]; then
   exit 2
 fi
 PACKAGE_BUILD_NUMBER="$(/usr/bin/plutil -extract build raw -o - "$ROOT_DIR/package.json")"
-BUILD_NUMBER="${GLIDESLOPE_BUILD_NUMBER:-$PACKAGE_BUILD_NUMBER}"
+BUILD_NUMBER="${ALIGHT_BUILD_NUMBER:-$PACKAGE_BUILD_NUMBER}"
 if [[ ! "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
   echo "package.json contains an invalid monotonically increasing build number: $BUILD_NUMBER" >&2
   exit 2
@@ -57,7 +57,7 @@ else
   SOURCE_DIRTY="false"
 fi
 if [[ "$BUILD_CONFIGURATION" != "debug" && "$BUILD_CONFIGURATION" != "release" ]]; then
-  echo "GLIDESLOPE_BUILD_CONFIGURATION must be debug or release." >&2
+  echo "ALIGHT_BUILD_CONFIGURATION must be debug or release." >&2
   exit 2
 fi
 
@@ -108,7 +108,7 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$VERSION</string>
   <key>CFBundleVersion</key>
   <string>$BUILD_NUMBER</string>
-  <key>GlideslopeUpdateChannel</key>
+  <key>AlightUpdateChannel</key>
   <string>$UPDATE_CHANNEL</string>
   <key>SUFeedURL</key>
   <string>$SPARKLE_FEED_URL</string>
@@ -128,11 +128,11 @@ cat >"$INFO_PLIST" <<PLIST
   <true/>
   <key>SUSignedFeedFailureExpirationInterval</key>
   <integer>0</integer>
-  <key>GlideslopeBuildConfiguration</key>
+  <key>AlightBuildConfiguration</key>
   <string>$BUILD_CONFIGURATION</string>
-  <key>GlideslopeSourceCommit</key>
+  <key>AlightSourceCommit</key>
   <string>$SOURCE_COMMIT</string>
-  <key>GlideslopeSourceDirty</key>
+  <key>AlightSourceDirty</key>
   <$SOURCE_DIRTY/>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>

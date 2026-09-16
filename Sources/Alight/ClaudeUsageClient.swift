@@ -1,7 +1,7 @@
 import Foundation
 
 /// Reads Claude Code's OAuth access token and polls Anthropic's subscription
-/// usage endpoint, mapping the five-hour / seven-day windows onto Glideslope's
+/// usage endpoint, mapping the five-hour / seven-day windows onto Alight's
 /// fast/slow pace windows.
 ///
 /// Token acquisition mirrors Astra's proven `providers/cli.py` path: prefer the
@@ -30,7 +30,7 @@ struct ClaudeUsageClient: Sendable {
     return URLSession(configuration: configuration)
   }()
   private var usageURL: URL {
-    let raw = ProcessInfo.processInfo.environment["GLIDESLOPE_CLAUDE_USAGE_URL"]
+    let raw = ProcessInfo.processInfo.environment["ALIGHT_CLAUDE_USAGE_URL"]
       ?? "https://api.anthropic.com/api/oauth/usage"
     return URL(string: raw) ?? URL(string: "https://api.anthropic.com/api/oauth/usage")!
   }
@@ -85,7 +85,7 @@ struct ClaudeUsageClient: Sendable {
     var request = URLRequest(url: usageURL)
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Accept")
-    request.setValue("Glideslope/0.3", forHTTPHeaderField: "User-Agent")
+    request.setValue("Alight/0.3", forHTTPHeaderField: "User-Agent")
 
     let (data, response) = try await Self.session.data(for: request)
     guard let http = response as? HTTPURLResponse else {
@@ -139,13 +139,13 @@ struct ClaudeUsageClient: Sendable {
     }
 
     // 2) Token file — the reliable channel for a GUI/login-item app, which does
-    //    not inherit the shell environment. Default `~/.glideslope/claude-token`,
-    //    overridable via GLIDESLOPE_CLAUDE_TOKEN_FILE.
+    //    not inherit the shell environment. Default `~/.alight/claude-token`,
+    //    overridable via ALIGHT_CLAUDE_TOKEN_FILE.
     let path: String
-    if let override = environment["GLIDESLOPE_CLAUDE_TOKEN_FILE"], !override.isEmpty {
+    if let override = environment["ALIGHT_CLAUDE_TOKEN_FILE"], !override.isEmpty {
       path = (override as NSString).expandingTildeInPath
     } else {
-      path = homeDirectory.appending(path: ".glideslope/claude-token").path
+      path = homeDirectory.appending(path: ".alight/claude-token").path
     }
     if let contents = readFile(path), let fileToken = firstToken(in: contents) {
       return ClaudeCredential(accessToken: fileToken, expiresAt: nil)

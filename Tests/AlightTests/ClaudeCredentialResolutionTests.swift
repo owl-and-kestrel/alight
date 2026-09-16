@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Glideslope
+@testable import Alight
 
 @Suite("Claude credential resolution")
 struct ClaudeCredentialResolutionTests {
@@ -11,7 +11,7 @@ struct ClaudeCredentialResolutionTests {
     let credential = try ClaudeUsageClient.resolveCredential(
       environment: [
         "CLAUDE_CODE_OAUTH_TOKEN": "  environment-token  ",
-        "GLIDESLOPE_CLAUDE_TOKEN_FILE": "/nonsecret/token"
+        "ALIGHT_CLAUDE_TOKEN_FILE": "/nonsecret/token"
       ],
       homeDirectory: home,
       readFile: { _ in Issue.record("file should not be read"); return nil },
@@ -25,7 +25,7 @@ struct ClaudeCredentialResolutionTests {
   @Test("first non-comment file token wins before Keychain")
   func fileWins() throws {
     let credential = try ClaudeUsageClient.resolveCredential(
-      environment: ["GLIDESLOPE_CLAUDE_TOKEN_FILE": "/nonsecret/token"],
+      environment: ["ALIGHT_CLAUDE_TOKEN_FILE": "/nonsecret/token"],
       homeDirectory: home,
       readFile: { path in
         #expect(path == "/nonsecret/token")
@@ -44,7 +44,7 @@ struct ClaudeCredentialResolutionTests {
       environment: [:],
       homeDirectory: home,
       readFile: { path in
-        #expect(path == "/nonsecret/test-home/.glideslope/claude-token")
+        #expect(path == "/nonsecret/test-home/.alight/claude-token")
         return "default-file-token\n"
       },
       readKeychain: { Issue.record("Keychain should not be read"); return "" }

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Glideslope
+@testable import Alight
 
 @Suite("Antigravity quota source and cache migration")
 struct AntigravityUsageSourceTests {
@@ -15,7 +15,7 @@ struct AntigravityUsageSourceTests {
 
   @Test("supported endpoint overrides change the stable cache identity")
   func overrideIdentity() {
-    let environment = ["GLIDESLOPE_ANTIGRAVITY_USAGE_URL": oldEndpoint]
+    let environment = ["ALIGHT_ANTIGRAVITY_USAGE_URL": oldEndpoint]
     #expect(AntigravityUsageSource.url(environment: environment).absoluteString == oldEndpoint)
     #expect(AntigravityUsageSource.cacheIdentity(environment: environment)
       != AntigravityUsageSource.cacheIdentity(environment: [:]))
@@ -26,7 +26,7 @@ struct AntigravityUsageSourceTests {
   @Test("source identifiers contain no private endpoint text")
   func privateEndpointText() {
     let identity = AntigravityUsageSource.cacheIdentity(environment: [
-      "GLIDESLOPE_ANTIGRAVITY_USAGE_URL": "https://user:private@example.invalid/quota?token=private"
+      "ALIGHT_ANTIGRAVITY_USAGE_URL": "https://user:private@example.invalid/quota?token=private"
     ])
     #expect(identity.count == 64)
     #expect(identity.allSatisfy { "0123456789abcdef".contains($0) })
@@ -63,7 +63,7 @@ struct AntigravityUsageSourceTests {
   @Test("switching endpoints in either direction invalidates only Antigravity")
   func endpointSwitch() throws {
     let current = AntigravityUsageSource.cacheIdentity(environment: [:])
-    let old = AntigravityUsageSource.cacheIdentity(environment: ["GLIDESLOPE_ANTIGRAVITY_USAGE_URL": oldEndpoint])
+    let old = AntigravityUsageSource.cacheIdentity(environment: ["ALIGHT_ANTIGRAVITY_USAGE_URL": oldEndpoint])
     for (firstIdentity, secondIdentity) in [(old, current), (current, old)] {
       let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
       defer { try? FileManager.default.removeItem(at: directory) }

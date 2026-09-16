@@ -1,13 +1,13 @@
-# Glideslope TODO
+# Alight TODO
 
 ## Usage history (attribution), not just a live gauge
 
-Glideslope currently shows only the latest usage reading per provider. Persist a
+Alight currently shows only the latest usage reading per provider. Persist a
 local history so a quota that "ticked down to 0" can be explained after the fact.
 
-- Sample the same Codex/Claude usage endpoints Glideslope already polls and append
+- Sample the same Codex/Claude usage endpoints Alight already polls and append
   `(timestamp, provider, limit_id, window, used_percent, resets_at)` to a local
-  ledger (SQLite or JSONL under `~/Library/Application Support/Glideslope/`).
+  ledger (SQLite or JSONL under `~/Library/Application Support/Alight/`).
 - Join the timeline against Codex's own local evidence: every rollout under
   `~/.codex/sessions/YYYY/MM/DD/*.jsonl` carries `token_count` events with a
   `rate_limits` snapshot (`used_percent`, `resets_at`) plus a `session_meta`

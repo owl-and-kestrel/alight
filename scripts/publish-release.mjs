@@ -12,14 +12,14 @@ const flags = new Set(process.argv.slice(2));
 const publish = flags.has("--publish");
 const allowDirty = flags.has("--allow-dirty");
 const allowUnsigned = flags.has("--allow-unsigned");
-const releaseDir = process.env.GLIDESLOPE_RELEASE_DIR || path.join(root, "dist/release");
-const zipPath = path.join(releaseDir, "Glideslope.zip");
+const releaseDir = process.env.ALIGHT_RELEASE_DIR || path.join(root, "dist/release");
+const zipPath = path.join(releaseDir, "Alight.zip");
 const appcastPath = path.join(releaseDir, "appcast.xml");
-const manifestPath = path.join(releaseDir, "glideslope-update.json");
-const channel = process.env.GLIDESLOPE_RELEASE_CHANNEL || "stable";
-const updateOrigin = validatedOrigin(process.env.GLIDESLOPE_UPDATE_ORIGIN || "https://updates.owlandkestrel.com");
-const okOrigin = validatedOrigin(process.env.GLIDESLOPE_OK_BASE_URL || "https://owlandkestrel.com");
-const chirpChannel = process.env.GLIDESLOPE_CHIRP_CHANNEL || "glideslope-updates";
+const manifestPath = path.join(releaseDir, "alight-update.json");
+const channel = process.env.ALIGHT_RELEASE_CHANNEL || "stable";
+const updateOrigin = validatedOrigin(process.env.ALIGHT_UPDATE_ORIGIN || "https://updates.owlandkestrel.com");
+const okOrigin = validatedOrigin(process.env.ALIGHT_OK_BASE_URL || "https://owlandkestrel.com");
+const chirpChannel = process.env.ALIGHT_CHIRP_CHANNEL || "alight-updates";
 
 if (flags.has("--help")) {
   process.stdout.write("Usage: node scripts/publish-release.mjs [--publish] [--allow-dirty] [--allow-unsigned]\n");
@@ -56,21 +56,21 @@ if (item.version !== version || item.build !== String(build)) throw new Error("A
 if (item.url !== artifact.url || item.length !== String(zip.length)) throw new Error("Appcast enclosure does not match the ZIP manifest.");
 if (!item.signature) throw new Error("Appcast enclosure is missing an Ed25519 signature.");
 const artifactURL = new URL(artifact.url);
-const expectedArtifactPath = `/glideslope/releases/v${version}/${zipSha256}/Glideslope.zip`;
+const expectedArtifactPath = `/alight/releases/v${version}/${zipSha256}/Alight.zip`;
 if (artifactURL.origin !== updateOrigin.origin || artifactURL.pathname !== expectedArtifactPath) {
   throw new Error("Artifact URL is not the content-addressed canonical release-origin URL.");
 }
-const expectedFeedPath = `/glideslope/${channel}/appcast.xml`;
+const expectedFeedPath = `/alight/${channel}/appcast.xml`;
 const feedURL = new URL(payload.updateFeed.url);
 if (feedURL.origin !== updateOrigin.origin || feedURL.pathname !== expectedFeedPath) throw new Error("Update feed URL is not canonical.");
 
 const artifactKey = artifactURL.pathname.slice(1);
 const appcastKey = feedURL.pathname.slice(1);
-const dedupeKey = `glideslope:${channel}:${version}:${build}:${zipSha256}`;
+const dedupeKey = `alight:${channel}:${version}:${build}:${zipSha256}`;
 const chirpPayload = {
   channel: chirpChannel, kind: "event", subtype: "product.release_available",
-  body: `Glideslope ${version} (${build}) is available. ${payload.downloadPageUrl}`,
-  payload: { eventType: "product.release_available", dedupeKey, severity: "info", product: "glideslope", channel,
+  body: `Alight ${version} (${build}) is available. ${payload.downloadPageUrl}`,
+  payload: { eventType: "product.release_available", dedupeKey, severity: "info", product: "alight", channel,
     version, build, releaseUrl: payload.downloadPageUrl, artifactSha256: zipSha256, sourceCommit: payload.source.commit }
 };
 
@@ -92,13 +92,13 @@ if (!publish) {
 // lookup or remote write. Delete this gate only when the authenticated Nest
 // release-origin client owns archive-first/pointer-last publication and exact
 // public readback.
-throw new Error("Glideslope publication is frozen until the authenticated Nest release-origin client is installed; direct R2 writes are retired.");
+throw new Error("Alight publication is frozen until the authenticated Nest release-origin client is installed; direct R2 writes are retired.");
 
 function validateManifest(value, expected) {
   parseProductUpdateManifest(value);
-  if (value.schema !== "ok.product-update.v1" || value.appId !== "glideslope" || value.bundleId !== "com.owlandkestrel.glideslope"
+  if (value.schema !== "ok.product-update.v1" || value.appId !== "alight" || value.bundleId !== "com.owlandkestrel.alight"
     || value.version !== expected.version || value.build !== expected.build || value.channel !== expected.channel) throw new Error("Release manifest identity does not match package metadata.");
-  if (!value.source || value.source.repository !== "https://github.com/owl-and-kestrel/glideslope.git" || !/^[0-9a-f]{40}$/u.test(value.source.commit || "")
+  if (!value.source || value.source.repository !== "https://github.com/owl-and-kestrel/alight.git" || !/^[0-9a-f]{40}$/u.test(value.source.commit || "")
     || typeof value.source.dirty !== "boolean" || value.source.buildConfiguration !== "release") throw new Error("Release manifest is missing exact source provenance.");
   if (!value.updateFeed || value.updateFeed.format !== "sparkle.appcast.v2" || !/^[0-9a-f]{64}$/u.test(value.updateFeed.sha256 || "")) throw new Error("Release manifest updateFeed is invalid.");
   if (!Array.isArray(value.artifacts) || value.artifacts.filter((x) => x.platform === "macos").length !== 1) throw new Error("Release manifest must contain exactly one macOS artifact.");
@@ -152,21 +152,23 @@ async function decodeAndVerifyManifest(document, expected) {
     publicKeyPem: publicKeyPEM
   }];
   const policy = {
-    productId: "glideslope",
-    appId: "glideslope",
-    packageId: "com.owlandkestrel.glideslope",
+    productId: "alight",
+    appId: "alight",
+    packageId: "com.owlandkestrel.alight",
     channel: expected.channel,
     publisher: {
       id: "owl-kestrel",
       domain: "owlandkestrel.com",
       allowedKeys: [{ keyId, publicKeySpkiSha256: spkiSha256 }]
     },
+    // Preserve the established Sparkle key identifier while the product and
+    // bundle identities migrate. The Ed25519 key bytes are unchanged.
     executableTrust: { authority: "product-native", verifier: "sparkle-ed25519", keyId: "sparkle-glideslope-1" },
-    installer: { adapterId: "glideslope.sparkle.macos.v1", kind: "native-updater" },
-    allowedSourceRepositories: ["https://github.com/owl-and-kestrel/glideslope.git"],
+    installer: { adapterId: "alight.sparkle.macos.v1", kind: "native-updater" },
+    allowedSourceRepositories: ["https://github.com/owl-and-kestrel/alight.git"],
     sourceBuildConfigurations: ["release"],
     allowedArtifactOrigins: [updateOrigin.origin],
-    allowedArtifactPathPrefixes: ["/glideslope/"],
+    allowedArtifactPathPrefixes: ["/alight/"],
     allowedFeedOrigins: [updateOrigin.origin, okOrigin.origin],
     allowedFeedFormats: ["sparkle.appcast.v2"],
     allowedPlatforms: ["macos"],

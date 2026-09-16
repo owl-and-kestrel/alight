@@ -1,17 +1,16 @@
 {
-  "name": "glideslope",
-  "version": "0.5.2",
-  "build": 12,
+  "name": "alight",
+  "version": "0.6.0",
+  "build": 13,
   "description": "A tiny native macOS menu bar gauge for Codex, Claude Code, and Antigravity usage pressure.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/owl-and-kestrel/glideslope.git"
+    "url": "https://github.com/owl-and-kestrel/alight.git"
   },
   "bin": {
-    "glideslope": "./bin/glideslope.mjs",
-    "codex-usage-pressure": "./bin/glideslope.mjs"
+    "alight": "./bin/alight.mjs"
   },
   "files": [
     "bin/",
@@ -30,8 +29,9 @@
   ],
   "scripts": {
     "build:native": "./script/build_and_run.sh --build",
-    "check": "node --check ./bin/glideslope.mjs",
+    "check": "node --check ./bin/alight.mjs",
     "package:release": "./script/package_release.sh",
+    "migrate:data": "./scripts/migrate-alight-data.sh",
     "release:dry-run": "node ./scripts/publish-release.mjs",
     "release:publish": "node ./scripts/publish-release.mjs --publish",
     "test": "node --test",

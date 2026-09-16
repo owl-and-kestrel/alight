@@ -9,12 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   static func main() {
     let arguments = CommandLine.arguments
     if let renderPlateIndex = arguments.firstIndex(of: "--render-plate") {
-      let output = renderPlateIndex + 1 < arguments.count ? arguments[renderPlateIndex + 1] : "glideslope-plate.png"
+      let output = renderPlateIndex + 1 < arguments.count ? arguments[renderPlateIndex + 1] : "alight-plate.png"
       RenderHarness.runPlate(outputPath: output)
       return
     }
     if let renderIndex = arguments.firstIndex(of: "--render") {
-      let output = renderIndex + 1 < arguments.count ? arguments[renderIndex + 1] : "glideslope-preview.png"
+      let output = renderIndex + 1 < arguments.count ? arguments[renderIndex + 1] : "alight-preview.png"
       RenderHarness.run(outputPath: output)
       return
     }
@@ -26,9 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    controller = StatusItemController()
     DispatchQueue.main.async {
-      GlideslopeRenameNotice.presentIfNeeded()
+      AlightMigrationNotice.presentIfNeeded()
+      self.controller = StatusItemController()
     }
   }
 }

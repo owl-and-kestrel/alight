@@ -4,7 +4,7 @@ import OSLog
 
 @Observable
 final class UsageStore {
-  private static let logger = Logger(subsystem: "com.owlandkestrel.glideslope", category: "usage")
+  private static let logger = Logger(subsystem: "com.owlandkestrel.alight", category: "usage")
 
   private let codex = CodexUsageClient()
   private let claude = ClaudeUsageClient()
@@ -83,7 +83,7 @@ final class UsageStore {
         claudeBackoff = 0
         claudeNextAllowed = now.addingTimeInterval(Self.claudeBaseInterval)
       } else if fresh.needsAuth {
-        // Credential failures are usually fixed outside Glideslope by opening
+        // Credential failures are usually fixed outside Alight by opening
         // Claude Code or signing in. Re-check the local credential soon instead
         // of hiding behind the generic network backoff.
         claudeBackoff = 0
@@ -157,7 +157,7 @@ struct UsageResultCache: Sendable {
     }
     do {
       let data = try Data(contentsOf: persistenceURL)
-      let document = try JSONDecoder.glideslope.decode(PersistedUsageCache.self, from: data)
+      let document = try JSONDecoder.alight.decode(PersistedUsageCache.self, from: data)
       guard document.version == PersistedUsageCache.currentVersion else {
         return
       }
@@ -176,6 +176,18 @@ struct UsageResultCache: Sendable {
       // Missing, corrupt, or old cache files are non-fatal. A future successful
       // provider response will atomically replace them.
       lastGood = [:]
+    }
+  }
+
+  /// Validates a persisted cache using the same Codable schema as the runtime
+  /// reader. Rename migration uses this instead of guessing at JSON fields.
+  static func isValidPersistedCache(at url: URL) -> Bool {
+    do {
+      let data = try Data(contentsOf: url)
+      let document = try JSONDecoder.alight.decode(PersistedUsageCache.self, from: data)
+      return document.version == PersistedUsageCache.currentVersion && !document.readings.isEmpty
+    } catch {
+      return false
     }
   }
 
@@ -282,7 +294,7 @@ struct UsageResultCache: Sendable {
         [.posixPermissions: 0o700],
         ofItemAtPath: directory.path
       )
-      let data = try JSONEncoder.glideslope.encode(document)
+      let data = try JSONEncoder.alight.encode(document)
       try data.write(to: persistenceURL, options: .atomic)
       try FileManager.default.setAttributes(
         [.posixPermissions: 0o600],
@@ -301,9 +313,10 @@ struct UsageResultCache: Sendable {
     ).first ?? FileManager.default.homeDirectoryForCurrentUser
       .appending(path: "Library/Application Support")
     return base
-      .appending(path: "Glideslope", directoryHint: .isDirectory)
+      .appending(path: "Alight", directoryHint: .isDirectory)
       .appending(path: "usage-cache.json")
   }
+
 }
 
 private struct PersistedUsageCache: Codable, Sendable {
@@ -320,7 +333,7 @@ private struct CachedUsageReading: Codable, Sendable {
 }
 
 private extension JSONEncoder {
-  static var glideslope: JSONEncoder {
+  static var alight: JSONEncoder {
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -329,7 +342,7 @@ private extension JSONEncoder {
 }
 
 private extension JSONDecoder {
-  static var glideslope: JSONDecoder {
+  static var alight: JSONDecoder {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     return decoder

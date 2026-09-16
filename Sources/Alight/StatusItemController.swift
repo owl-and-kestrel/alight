@@ -12,7 +12,7 @@ final class StatusItemController {
       button.isBordered = false
       button.imagePosition = .imageOnly
       button.imageScaling = .scaleProportionallyUpOrDown
-      button.toolTip = "Glideslope"
+      button.toolTip = "Alight"
     }
     statusItem.menu = makeMenu()
 
@@ -114,14 +114,7 @@ final class StatusItemController {
   private func addReleaseSection(to menu: NSMenu) {
     let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
       ?? "development build"
-    addDisabledItem("Glideslope \(version)", to: menu)
-
-    let downloadAlight = NSMenuItem(
-      title: "Download Alight…",
-      action: #selector(downloadAlightFromMenu),
-      keyEquivalent: ""
-    )
-    menu.addItem(downloadAlight)
+    addDisabledItem("Alight \(version)", to: menu)
 
     let checkForUpdates = NSMenuItem(
       title: "Check for Updates…",
@@ -301,10 +294,6 @@ final class StatusItemController {
 
   @objc private func checkForUpdatesFromMenu() {
     updater.checkForUpdates()
-  }
-
-  @objc private func downloadAlightFromMenu() {
-    _ = NSWorkspace.shared.open(GlideslopeRenameNotice.alightURL)
   }
 
   @objc private func toggleAutomaticUpdates() {
