@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 
 import { createHash, createPublicKey, verify } from "node:crypto";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { parseProductUpdateManifest, verifySignedReleaseManifest } from "@owl-kestrel/hatch-contracts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const execFileAsync = promisify(execFile);
 const flags = new Set(process.argv.slice(2));
 const publish = flags.has("--publish");
 const allowDirty = flags.has("--allow-dirty");
@@ -87,12 +90,28 @@ if (!publish) {
   process.exit(0);
 }
 
-// Direct R2 mutation is retired. Keep the local validation/dry-run surface
-// useful while publication is frozen, then fail closed before any credential
-// lookup or remote write. Delete this gate only when the authenticated Nest
-// release-origin client owns archive-first/pointer-last publication and exact
-// public readback.
-throw new Error("Alight publication is frozen until the authenticated Nest release-origin client is installed; direct R2 writes are retired.");
+// Publication is delegated to the authenticated Nest host client. The
+// publisher never learns credentials and never writes the origin directly.
+const nestCliPath = String(process.env.ALIGHT_NEST_CLI_PATH || "").trim();
+const planFile = String(process.env.ALIGHT_RELEASE_ORIGIN_PLAN_FILE || "").trim();
+const planId = String(process.env.ALIGHT_RELEASE_ORIGIN_PLAN_ID || "").trim();
+const expectedVersion = String(process.env.ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION || "").trim();
+const bridgeArtifactPath = String(process.env.ALIGHT_BRIDGE_ARTIFACT_PATH || "").trim();
+const bridgeAppcastPath = String(process.env.ALIGHT_BRIDGE_APPCAST_PATH || "").trim();
+const bridgeManifestPath = String(process.env.ALIGHT_BRIDGE_MANIFEST_PATH || "").trim();
+if (!nestCliPath || !path.isAbsolute(nestCliPath) || !planFile || !planId || !expectedVersion
+  || !bridgeArtifactPath || !bridgeAppcastPath || !bridgeManifestPath) {
+  throw new Error("Alight publication requires ALIGHT_NEST_CLI_PATH, ALIGHT_RELEASE_ORIGIN_PLAN_FILE, ALIGHT_RELEASE_ORIGIN_PLAN_ID, ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION, and the three ALIGHT_BRIDGE_*_PATH values.");
+}
+const delegated = await execFileAsync(process.execPath, [nestCliPath, "deploy", "plan", "execute", "--file", planFile,
+  "--id", planId, "--expected-version", expectedVersion, "--artifact-path", zipPath, "--appcast-path", appcastPath,
+  "--manifest-path", manifestPath, "--bridge-artifact-path", bridgeArtifactPath, "--bridge-appcast-path", bridgeAppcastPath,
+  "--bridge-manifest-path", bridgeManifestPath, "--yes", "--json"], { cwd: root, env: process.env, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 });
+const delegatedResult = JSON.parse(delegated.stdout);
+if (delegatedResult?.type !== "ok.nest.release-origin-publication-execution.v1" || delegatedResult.status !== "completed") {
+  throw new Error("Nest release-origin client returned an invalid completion receipt.");
+}
+process.stdout.write(`${JSON.stringify(delegatedResult, null, 2)}\n`);
 
 function validateManifest(value, expected) {
   parseProductUpdateManifest(value);

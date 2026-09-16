@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -65,15 +65,30 @@ test("dry-run validates the content-addressed ZIP and appcast without leaking cr
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test("publication fails closed with no remaining direct R2 writer", async () => {
+test("publication delegates through Nest and fails closed without a reviewed plan", async () => {
   const f = await fixture({ signed: true });
   try {
     await assert.rejects(run(f.directory, ["--publish"], { OK_RELEASE_PUBLIC_KEY_FILE: f.publicKeyPath }),
-      /publication is frozen.*direct R2 writes are retired/iu);
+      /requires ALIGHT_NEST_CLI_PATH.*ALIGHT_RELEASE_ORIGIN_PLAN_FILE/iu);
     const source = await readFile(path.join(root, "scripts/publish-release.mjs"), "utf8");
     assert.equal(source.includes("wrangler"), false);
     assert.equal(source.includes("r2Put"), false);
     assert.equal(source.includes("r2 object put"), false);
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
+
+test("publication delegates the exact six artifact paths to the Nest CLI", async () => {
+  const f = await fixture({ signed: true });
+  const cli = path.join(f.directory, "nest.mjs");
+  await writeFile(cli, `process.stdout.write(JSON.stringify({type:"ok.nest.release-origin-publication-execution.v1",status:"completed",plan:{}}));\n`);
+  await chmod(cli, 0o700);
+  try {
+    const result = await run(f.directory, ["--publish"], { OK_RELEASE_PUBLIC_KEY_FILE: f.publicKeyPath,
+      ALIGHT_NEST_CLI_PATH: cli, ALIGHT_RELEASE_ORIGIN_PLAN_FILE: path.join(f.directory, "plan.json"),
+      ALIGHT_RELEASE_ORIGIN_PLAN_ID: "deployplan_test", ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION: "1",
+      ALIGHT_BRIDGE_ARTIFACT_PATH: path.join(f.directory, "Glideslope.zip"), ALIGHT_BRIDGE_APPCAST_PATH: path.join(f.directory, "glideslope-appcast.xml"),
+      ALIGHT_BRIDGE_MANIFEST_PATH: path.join(f.directory, "glideslope-update.json") });
+    assert.equal(JSON.parse(result.stdout).status, "completed");
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 

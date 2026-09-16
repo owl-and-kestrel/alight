@@ -257,13 +257,17 @@ mutation-free plan:
 npm run release:dry-run
 ```
 
-Routine publication is intentionally frozen during the owned-origin cutover.
-`release:publish` fails closed before credential lookup or any remote write.
-It will be restored only when the authenticated Nest client owns the complete
-archive-first/pointer-last transaction:
+`release:publish` delegates to the authenticated Nest release-origin client;
+the native publisher never reads credentials or writes the origin. Set
+`ALIGHT_NEST_CLI_PATH`, `ALIGHT_RELEASE_ORIGIN_PLAN_FILE`,
+`ALIGHT_RELEASE_ORIGIN_PLAN_ID`, `ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION`,
+and the three private `ALIGHT_BRIDGE_ARTIFACT_PATH`,
+`ALIGHT_BRIDGE_APPCAST_PATH`, and `ALIGHT_BRIDGE_MANIFEST_PATH` values. The
+Nest client validates the admitted plan, claims its lease, publishes Alight,
+checks the public Alight page, then publishes the one final Glideslope bridge:
 
 ```sh
-npm run release:publish  # expected to fail closed while frozen
+npm run release:publish  # requires the complete reviewed plan and environment
 ```
 
 The dry-run still validates the manifest, exact appcast shape,
