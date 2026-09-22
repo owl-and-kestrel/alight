@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -10,6 +10,28 @@ import test from "node:test";
 const execFileAsync = promisify(execFile);
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+
+async function bridgeFixture(directory, { mutate = (value) => value } = {}) {
+  const bridgeDir = path.join(directory, "bridge");
+  await mkdir(bridgeDir, { recursive: true });
+  const zip = Buffer.from("bridge fixture wrapping Glideslope.app", "utf8");
+  const zipSha = createHash("sha256").update(zip).digest("hex");
+  const artifactURL = `https://updates.owlandkestrel.com/glideslope/releases/v${pkg.version}/${zipSha}/Glideslope.zip`;
+  const appcast = Buffer.from(`<?xml version="1.0"?><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:shortVersionString>${pkg.version}</sparkle:shortVersionString><sparkle:version>${pkg.build}</sparkle:version><enclosure url="${artifactURL}" length="${zip.length}" sparkle:edSignature="fixture-signature" /></item></channel></rss>`, "utf8");
+  const appcastSha = createHash("sha256").update(appcast).digest("hex");
+  const manifest = mutate({
+    schema: "ok.product-bridge.v1", appId: "alight", legacyAppId: "glideslope",
+    hostBundleId: "com.owlandkestrel.glideslope", bundleId: "com.owlandkestrel.alight",
+    version: pkg.version, build: pkg.build, channel: "stable",
+    legacyFeed: { format: "sparkle.appcast.v2", url: "https://updates.owlandkestrel.com/glideslope/stable/appcast.xml", sha256: appcastSha },
+    targetFeedUrl: "https://updates.owlandkestrel.com/alight/stable/appcast.xml",
+    artifacts: [{ platform: "macos", archiveAppName: "Glideslope.app", url: artifactURL, sha256: zipSha, sizeBytes: zip.length }]
+  });
+  await writeFile(path.join(bridgeDir, "Glideslope.zip"), zip);
+  await writeFile(path.join(bridgeDir, "appcast.xml"), appcast);
+  await writeFile(path.join(bridgeDir, "glideslope-bridge.json"), `${JSON.stringify(manifest)}\n`);
+  return { zipSha };
+}
 
 async function fixture({ dirty = false, signed = false, mutate = (value) => value } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "alight-publisher-"));
@@ -65,30 +87,15 @@ test("dry-run validates the content-addressed ZIP and appcast without leaking cr
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test("publication delegates through Nest and fails closed without a reviewed plan", async () => {
+test("publication fails closed with no remaining direct R2 writer", async () => {
   const f = await fixture({ signed: true });
   try {
     await assert.rejects(run(f.directory, ["--publish"], { OK_RELEASE_PUBLIC_KEY_FILE: f.publicKeyPath }),
-      /requires ALIGHT_NEST_CLI_PATH.*ALIGHT_RELEASE_ORIGIN_PLAN_FILE/iu);
+      /publication is frozen.*direct R2 writes are retired/iu);
     const source = await readFile(path.join(root, "scripts/publish-release.mjs"), "utf8");
     assert.equal(source.includes("wrangler"), false);
     assert.equal(source.includes("r2Put"), false);
     assert.equal(source.includes("r2 object put"), false);
-  } finally { await rm(f.directory, { recursive: true, force: true }); }
-});
-
-test("publication delegates the exact six artifact paths to the Nest CLI", async () => {
-  const f = await fixture({ signed: true });
-  const cli = path.join(f.directory, "nest.mjs");
-  await writeFile(cli, `process.stdout.write(JSON.stringify({type:"ok.nest.release-origin-publication-execution.v1",status:"completed",plan:{}}));\n`);
-  await chmod(cli, 0o700);
-  try {
-    const result = await run(f.directory, ["--publish"], { OK_RELEASE_PUBLIC_KEY_FILE: f.publicKeyPath,
-      ALIGHT_NEST_CLI_PATH: cli, ALIGHT_RELEASE_ORIGIN_PLAN_FILE: path.join(f.directory, "plan.json"),
-      ALIGHT_RELEASE_ORIGIN_PLAN_ID: "deployplan_test", ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION: "1",
-      ALIGHT_BRIDGE_ARTIFACT_PATH: path.join(f.directory, "Glideslope.zip"), ALIGHT_BRIDGE_APPCAST_PATH: path.join(f.directory, "glideslope-appcast.xml"),
-      ALIGHT_BRIDGE_MANIFEST_PATH: path.join(f.directory, "glideslope-update.json") });
-    assert.equal(JSON.parse(result.stdout).status, "completed");
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
@@ -112,4 +119,37 @@ test("signed O+K provenance is verified and tampering is rejected", async () => 
     await writeFile(file, JSON.stringify(document));
     await assert.rejects(run(f.directory, [], { OK_RELEASE_PUBLIC_KEY_FILE: f.publicKeyPath }), /invalid|non-canonical|verification failed/u);
   } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
+
+test("dry-run validates the Glideslope bridge when present and orders it after the Alight archive", async () => {
+  const f = await fixture();
+  try {
+    const bridge = await bridgeFixture(f.directory);
+    const { stdout } = await run(f.directory);
+    const plan = JSON.parse(stdout);
+    assert.equal(plan.bridge.artifactKey, `glideslope/releases/v${pkg.version}/${bridge.zipSha}/Glideslope.zip`);
+    assert.equal(plan.bridge.appcastKey, "glideslope/stable/appcast.xml");
+    assert.equal(plan.bridge.hostBundleId, "com.owlandkestrel.glideslope");
+    const order = plan.publicationOrder;
+    assert.ok(order.indexOf("Nest stage/commit/read back bridge ZIP") > order.indexOf("Nest pointer CAS/read back appcast"));
+    assert.ok(order.indexOf("Nest pointer CAS/read back Glideslope appcast") < order.indexOf("publish Release/Trust ledger"));
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
+
+test("bridge validation rejects a mismatched host identity or archive", async () => {
+  const wrongHost = await fixture();
+  try {
+    await bridgeFixture(wrongHost.directory, { mutate: (m) => { m.hostBundleId = "com.owlandkestrel.alight"; return m; } });
+    await assert.rejects(run(wrongHost.directory), /Bridge manifest identity/u);
+  } finally { await rm(wrongHost.directory, { recursive: true, force: true }); }
+  const wrongBytes = await fixture();
+  try {
+    await bridgeFixture(wrongBytes.directory);
+    await writeFile(path.join(wrongBytes.directory, "bridge", "Glideslope.zip"), Buffer.from("tampered"));
+    await assert.rejects(run(wrongBytes.directory), /Bridge ZIP bytes/u);
+  } finally { await rm(wrongBytes.directory, { recursive: true, force: true }); }
+  const noBridge = await fixture();
+  try {
+    assert.equal(JSON.parse((await run(noBridge.directory)).stdout).bridge, null);
+  } finally { await rm(noBridge.directory, { recursive: true, force: true }); }
 });

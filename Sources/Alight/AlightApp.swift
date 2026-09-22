@@ -18,6 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       RenderHarness.run(outputPath: output)
       return
     }
+    if let renderMetersIndex = arguments.firstIndex(of: "--render-meters") {
+      let output = renderMetersIndex + 1 < arguments.count ? arguments[renderMetersIndex + 1] : "alight-meters-preview.png"
+      RenderHarness.runMeters(outputPath: output)
+      return
+    }
 
     let app = NSApplication.shared
     app.delegate = sharedDelegate
@@ -27,6 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     DispatchQueue.main.async {
+      // An installation bridged from the Glideslope feed still lives at
+      // Glideslope.app; take the new name first, then continue as Alight.
+      if BridgeRelocation.relocateIfNeeded() {
+        NSApp.terminate(nil)
+        return
+      }
       AlightMigrationNotice.presentIfNeeded()
       self.controller = StatusItemController()
     }

@@ -12,8 +12,8 @@ import Foundation
 ///
 /// This client is intentionally **read-only**: it never refreshes or rewrites
 /// the Keychain credential, so it can never invalidate the refresh token the
-/// Claude Code app itself depends on. When the stored access token has expired
-/// it reports a degraded state and waits for Claude Code to refresh it.
+/// Claude Code app itself depends on. Near expiry it asks the `claude` CLI to
+/// renew its own login (see `ClaudeCLIRenewal`) and re-reads the Keychain.
 struct ClaudeUsageClient: Sendable {
   private static let keychainService = "Claude Code-credentials"
   private static let session: URLSession = {
@@ -35,8 +35,13 @@ struct ClaudeUsageClient: Sendable {
     return URL(string: raw) ?? URL(string: "https://api.anthropic.com/api/oauth/usage")!
   }
 
+  /// How long an expired-but-refreshable Keychain login is reported as
+  /// "renewing" before the menu falls back to asking for a sign-in. The CLI
+  /// renewal retries once a minute inside this window.
+  static let renewalGrace: TimeInterval = 10 * 60
+
   func result(now: Date = Date()) async -> ProviderResult {
-    let credential: ClaudeCredential
+    var credential: ClaudeCredential
     do {
       credential = try loadCredential()
     } catch {
@@ -45,38 +50,124 @@ struct ClaudeUsageClient: Sendable {
       return .failure(.claude, source: "error", error: ClaudeUsageClient.describe(error), needsAuth: needsAuth)
     }
 
-    if let expiresAt = credential.expiresAt, expiresAt <= now {
-      return .failure(.claude, source: "expired", error: "token expired — sign in to refresh", needsAuth: true)
+    // Nothing else renews the CLI login for desktop-first users, so let the
+    // CLI renew it just before (or after) expiry, then re-read the Keychain.
+    if ClaudeCLIRenewal.shouldRenew(credential, now: now),
+       await ClaudeCLIRenewal.shared.renew(now: now),
+       let renewed = try? loadCredential() {
+      credential = renewed
+    }
+
+    if let expiresAt = credential.expiresAt, expiresAt <= Date() {
+      return Self.expiredResult(credential, expiresAt: expiresAt, now: now)
     }
 
     do {
-      let payload = try await fetchPayload(token: credential.accessToken)
-      let windows = ClaudeUsageParser.windows(from: payload, now: now)
-      guard ClaudeUsageParser.hasCompleteBroadWindows(windows) else {
-        // Do not treat a partial 200 as authoritative. Reconciliation will keep
-        // the prior reset-valid snapshot, while a complete later response can
-        // still clear scoped limits that are genuinely no longer active.
-        return .failure(.claude, source: "error", error: "incomplete usage windows in response")
-      }
-      return ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: windows)
-    } catch {
-      let needsAuth: Bool
-      let retryAfter: TimeInterval?
-      if case ClaudeError.fetchFailed(let code, let wait) = error {
-        needsAuth = code == 401
-        retryAfter = wait
-      } else {
-        needsAuth = false
-        retryAfter = nil
+      return try await liveResult(token: credential.accessToken, credential: credential, now: now)
+    } catch ClaudeError.fetchFailed(401, _) where credential.hasRefreshToken {
+      // A rejected token is usually one that expired between the Keychain read
+      // and the request, or one the server no longer honors. Let the CLI renew
+      // it and retry once before telling the user to sign in.
+      if await ClaudeCLIRenewal.shared.renew(now: now, force: true),
+         let renewed = try? loadCredential(),
+         renewed.accessToken != credential.accessToken,
+         (renewed.expiresAt ?? .distantFuture) > Date() {
+        do {
+          return try await liveResult(token: renewed.accessToken, credential: renewed, now: now)
+        } catch {
+          return Self.failureResult(error, credential: renewed)
+        }
       }
       return .failure(
         .claude,
         source: "error",
-        error: ClaudeUsageClient.describe(error),
-        needsAuth: needsAuth,
-        retryAfterSeconds: retryAfter
+        error: "token rejected — renewing Claude Code login",
+        needsAuth: false,
+        retryAfterSeconds: ClaudeCLIRenewal.minimumAttemptInterval,
+        credentialExpiresAt: credential.expiresAt
+      )
+    } catch {
+      return Self.failureResult(error, credential: credential)
+    }
+  }
+
+  private func liveResult(token: String, credential: ClaudeCredential, now: Date) async throws -> ProviderResult {
+    let payload = try await fetchPayload(token: token)
+    let windows = ClaudeUsageParser.windows(from: payload, now: now)
+    guard ClaudeUsageParser.hasCompleteBroadWindows(windows) else {
+      // Do not treat a partial 200 as authoritative. Reconciliation will keep
+      // the prior reset-valid snapshot, while a complete later response can
+      // still clear scoped limits that are genuinely no longer active.
+      return .failure(
+        .claude,
+        source: "error",
+        error: "incomplete usage windows in response",
+        credentialExpiresAt: credential.expiresAt
       )
     }
+    return ProviderResult(
+      provider: .claude,
+      ok: true,
+      source: "live",
+      error: nil,
+      windows: windows,
+      credentialExpiresAt: credential.expiresAt
+    )
+  }
+
+  /// An expired Keychain login that still carries a refresh token is a renewal
+  /// in progress, not a sign-out: the CLI retries once a minute for a grace
+  /// period before the menu offers Sign In. A login with no refresh token can
+  /// only be recovered by signing in.
+  static func expiredResult(_ credential: ClaudeCredential, expiresAt: Date, now: Date) -> ProviderResult {
+    guard credential.hasRefreshToken else {
+      return .failure(
+        .claude,
+        source: "expired",
+        error: "Claude Code login lapsed — sign in again",
+        needsAuth: true,
+        credentialExpiresAt: expiresAt
+      )
+    }
+    let expiredFor = now.timeIntervalSince(expiresAt)
+    if expiredFor < renewalGrace {
+      return .failure(
+        .claude,
+        source: "renewing",
+        error: "renewing Claude Code login…",
+        needsAuth: false,
+        retryAfterSeconds: ClaudeCLIRenewal.minimumAttemptInterval,
+        credentialExpiresAt: expiresAt
+      )
+    }
+    return .failure(
+      .claude,
+      source: "expired",
+      error: "token expired — sign in to refresh",
+      needsAuth: true,
+      retryAfterSeconds: ClaudeCLIRenewal.minimumAttemptInterval,
+      credentialExpiresAt: expiresAt
+    )
+  }
+
+  private static func failureResult(_ error: Error, credential: ClaudeCredential) -> ProviderResult {
+    let needsAuth: Bool
+    let retryAfter: TimeInterval?
+    if case ClaudeError.fetchFailed(let code, let wait) = error {
+      needsAuth = code == 401
+      retryAfter = wait
+    } else {
+      needsAuth = false
+      retryAfter = nil
+    }
+    return .failure(
+      .claude,
+      source: "error",
+      error: describe(error),
+      needsAuth: needsAuth,
+      retryAfterSeconds: retryAfter,
+      credentialExpiresAt: credential.expiresAt
+    )
   }
 
   // MARK: - Networking
@@ -135,7 +226,7 @@ struct ClaudeUsageClient: Sendable {
     //    long-lived-token path.
     if let envToken = environment["CLAUDE_CODE_OAUTH_TOKEN"]?
       .trimmingCharacters(in: .whitespacesAndNewlines), !envToken.isEmpty {
-      return ClaudeCredential(accessToken: envToken, expiresAt: nil)
+      return ClaudeCredential(accessToken: envToken, expiresAt: nil, hasRefreshToken: false)
     }
 
     // 2) Token file — the reliable channel for a GUI/login-item app, which does
@@ -148,7 +239,7 @@ struct ClaudeUsageClient: Sendable {
       path = homeDirectory.appending(path: ".alight/claude-token").path
     }
     if let contents = readFile(path), let fileToken = firstToken(in: contents) {
-      return ClaudeCredential(accessToken: fileToken, expiresAt: nil)
+      return ClaudeCredential(accessToken: fileToken, expiresAt: nil, hasRefreshToken: false)
     }
 
     // 3) Shared Claude Code Keychain item, read only. The injected operation
@@ -164,7 +255,10 @@ struct ClaudeUsageClient: Sendable {
       throw ClaudeError.malformed
     }
     let expiresAt = (oauth["expiresAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
-    return ClaudeCredential(accessToken: token, expiresAt: expiresAt)
+    // Only presence matters: the CLI, not Alight, spends the refresh token.
+    let hasRefreshToken = (oauth["refreshToken"] as? String)
+      .map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+    return ClaudeCredential(accessToken: token, expiresAt: expiresAt, hasRefreshToken: hasRefreshToken)
   }
 
   private static func firstToken(in contents: String) -> String? {
@@ -251,6 +345,7 @@ struct ClaudeUsageClient: Sendable {
 struct ClaudeCredential: Sendable {
   let accessToken: String
   let expiresAt: Date?
+  let hasRefreshToken: Bool
 }
 
 enum ClaudeError: Error {

@@ -25,11 +25,15 @@ The menu groups windows by provider and uses a simple pressure color per window:
 - green: good / on pace
 - red: low / too hot / usage is ahead of pace
 
+The **Display Mode** menu lets you switch between:
+- **Gauge**: The circular dial with pace-relative hands, redline danger arc, and reset clock hands.
+- **Meters**: One dark card per provider (Codex, Claude, Antigravity), each with a small colored square on the left and one colored track per limit window on the right: weekly on top and thicker, ~5h below and thinner, plus a thin third track for Claude's active Fable limit. A white bar on each track shows usage (or what remains, in Empty mode), and a dot marks how far through the window the clock is: drawn in the provider color where it sits on the bar (usage ahead of the clock), white where it sits on the track (clock ahead of usage), and two-toned when they are about even.
+
 The **Icon Settings** submenu lets you tune the menu-bar glyph without editing
 code. Slider controls persist local point values for Fable star size/radius,
 short-window hand length/width/radius, weekly hand length/width/radius, scale dot
-size/radius, redline width, and hub dot size. Color choices for Codex, Claude,
-Antigravity, and the redline are persisted alongside them. Radius sliders are intentionally
+size/radius, redline width, hub dot size, and meter width. Color choices for Codex, Claude,
+Antigravity, and the redline, as well as meter label style, fill style, and direction choices, are persisted alongside them. Radius sliders are intentionally
 permissive: elements can be pushed off the dial and will only stop when the icon
 canvas itself clips them.
 
@@ -93,9 +97,9 @@ shared exact-name certificate renews through Certbot. Every HTTP and HTTPS path
 returns the same permanent redirect to the canonical Apps page. Removing the
 alias never removes the canonical Apps route or Alight release feed.
 
-The technical alpha is ad-hoc signed rather than Developer ID signed/notarized, so its first installation may require **System Settings → Privacy & Security → Open Anyway**. Pre-Sparkle users need one manual bridge installation; later automatic releases can add Developer ID signing through the same feed while preserving the bundle id and Sparkle Ed25519 key. See [`docs/releasing.md`](docs/releasing.md).
+The technical alpha is ad-hoc signed rather than Developer ID signed/notarized, so its first installation may require **System Settings → Privacy & Security → Open Anyway**. Installed Glideslope apps are not stranded: every Alight release also packages a bridge for the historical Glideslope feed (the same build wrapped as `Glideslope.app`), which Sparkle installs in place; Alight then renames itself to `Alight.app` and continues on its own feed. Pre-Sparkle users need one manual installation. See [`docs/releasing.md`](docs/releasing.md).
 
-After installing the reviewed Alight bridge package, choose **Import Settings**
+After arriving via the bridge or a fresh install, choose **Import Settings**
 on first launch to bring across the valid native cache and allowlisted
 appearance settings before the status item starts, or choose **Start Fresh**.
 Run `npm run migrate:data` with Alight stopped to preview and explicitly apply

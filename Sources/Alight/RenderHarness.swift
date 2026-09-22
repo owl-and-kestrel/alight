@@ -76,6 +76,173 @@ enum RenderHarness {
     writePNG(sheet, outputPath: outputPath)
   }
 
+  static func runMeters(outputPath: String) {
+    let typicalStatus = sample(
+      codexFast: nil,
+      codexSlow: 55,
+      claudeFast: 74,
+      claudeSlow: 18,
+      claudeFable: 78,
+      antigravityFast: 35,
+      antigravitySlow: 60
+    )
+    let peggedStatus = sample(
+      codexFast: nil,
+      codexSlow: 100,
+      claudeFast: 50,
+      claudeSlow: 0,
+      antigravityFast: 0,
+      antigravitySlow: 100
+    )
+    // Everything running hot: fill past every pace tick.
+    let hotStatus = sample(
+      codexFast: nil,
+      codexSlow: 90,
+      claudeFast: 95,
+      claudeSlow: 70,
+      antigravityFast: 60,
+      antigravitySlow: 85
+    )
+    let codexOnlyStatus = sample(codexFast: nil, codexSlow: 80, claudeFast: nil, claudeSlow: nil)
+    let claudeOnlyStatus = sample(codexFast: nil, codexSlow: nil, claudeFast: 60, claudeSlow: 30)
+    let twoProviderStatus = sample(codexFast: nil, codexSlow: 40, claudeFast: 85, claudeSlow: 20)
+
+    let meterScenarios: [(String, UsageStatus, MeterFillMode, MeterDirection, MeterLabelMode)] = [
+      ("typical", typicalStatus, .fill, .leftToRight, .swatch),
+      ("typical · bars only", typicalStatus, .fill, .leftToRight, .none),
+      ("typical · empty RTL", typicalStatus, .empty, .rightToLeft, .swatch),
+      ("hot", hotStatus, .fill, .leftToRight, .swatch),
+      ("hot · empty LTR", hotStatus, .empty, .leftToRight, .swatch),
+      ("pegged", peggedStatus, .fill, .leftToRight, .swatch),
+      ("two providers", twoProviderStatus, .fill, .leftToRight, .swatch),
+      ("claude only", claudeOnlyStatus, .fill, .leftToRight, .swatch),
+      ("codex only", codexOnlyStatus, .fill, .leftToRight, .swatch)
+    ]
+
+    let previewScale: CGFloat = 8
+    let displayScale: CGFloat = 2
+    let meterWidth: CGFloat = 36
+    let sampleStyle = MeterIconStyle(
+      width: meterWidth,
+      fillMode: .fill,
+      direction: .leftToRight,
+      labelMode: .swatch,
+      codexColor: AppSettings.codexColor.nsColor,
+      claudeColor: AppSettings.claudeColor.nsColor,
+      antigravityColor: AppSettings.antigravityColor.nsColor
+    )
+    let maxIconWidth = MeterIconRenderer.size(for: sampleStyle).width
+    let iconHeight = MeterIconRenderer.size(for: sampleStyle).height
+    let tile = NSSize(
+      width: maxIconWidth * previewScale + 16,
+      height: iconHeight * previewScale
+    )
+    let labelStrip: CGFloat = 22
+    let padding: CGFloat = 16
+    let backgrounds: [(String, NSColor, NSAppearance?)] = [
+      ("light", NSColor(white: 0.95, alpha: 1), NSAppearance(named: .aqua)),
+      ("blue tint", NSColor(srgbRed: 0.42, green: 0.62, blue: 0.88, alpha: 1), NSAppearance(named: .aqua)),
+      ("dark", NSColor(white: 0.12, alpha: 1), NSAppearance(named: .darkAqua))
+    ]
+
+    let cols = meterScenarios.count
+    let rows = backgrounds.count
+    // A strip of retina-pixel (2x) renders at 1:1 sits under the magnified
+    // sheet, so the PNG also shows roughly what the menu bar shows.
+    let actualStripHeight = iconHeight * displayScale + 2 * padding
+    let sheet = NSImage(size: NSSize(
+      width: padding + CGFloat(cols) * (tile.width + padding),
+      height: padding + CGFloat(rows) * (tile.height + labelStrip + padding) + actualStripHeight * CGFloat(backgrounds.count)
+    ))
+
+    sheet.lockFocus()
+    NSGraphicsContext.current?.imageInterpolation = .none
+    NSColor(white: 0.3, alpha: 1).setFill()
+    NSRect(origin: .zero, size: sheet.size).fill()
+
+    for (rowIndex, background) in backgrounds.enumerated() {
+      let appearance = background.2 ?? NSApp.effectiveAppearance
+      let stripY = CGFloat(rowIndex) * actualStripHeight
+      let strip = NSRect(x: 0, y: stripY, width: sheet.size.width, height: actualStripHeight)
+      background.1.setFill()
+      strip.fill()
+      var x = padding
+      for scenario in meterScenarios {
+        let style = MeterIconStyle(
+          width: meterWidth,
+          fillMode: scenario.2,
+          direction: scenario.3,
+          labelMode: scenario.4,
+          codexColor: AppSettings.codexColor.nsColor,
+          claudeColor: AppSettings.claudeColor.nsColor,
+          antigravityColor: AppSettings.antigravityColor.nsColor
+        )
+        var icon = NSImage()
+        appearance.performAsCurrentDrawingAppearance {
+          icon = MeterIconRenderer.image(status: scenario.1, scale: displayScale, style: style, now: scenario.1.generatedAt)
+        }
+        icon.draw(
+          in: NSRect(x: x, y: stripY + padding, width: icon.size.width, height: icon.size.height),
+          from: .zero,
+          operation: .sourceOver,
+          fraction: 1
+        )
+        x += icon.size.width + padding * 2
+      }
+    }
+
+    for (rowIndex, background) in backgrounds.enumerated() {
+      let appearance = background.2 ?? NSApp.effectiveAppearance
+      for (colIndex, scenario) in meterScenarios.enumerated() {
+        let originX = padding + CGFloat(colIndex) * (tile.width + padding)
+        let originY = actualStripHeight * CGFloat(backgrounds.count) + padding + CGFloat(rowIndex) * (tile.height + labelStrip + padding)
+
+        let cell = NSRect(x: originX, y: originY + labelStrip, width: tile.width, height: tile.height)
+        background.1.setFill()
+        NSBezierPath(roundedRect: cell, xRadius: 10, yRadius: 10).fill()
+
+        let style = MeterIconStyle(
+          width: meterWidth,
+          fillMode: scenario.2,
+          direction: scenario.3,
+          labelMode: scenario.4,
+          codexColor: AppSettings.codexColor.nsColor,
+          claudeColor: AppSettings.claudeColor.nsColor,
+          antigravityColor: AppSettings.antigravityColor.nsColor
+        )
+
+        var icon = NSImage()
+        appearance.performAsCurrentDrawingAppearance {
+          icon = MeterIconRenderer.image(
+            status: scenario.1,
+            scale: displayScale,
+            style: style,
+            now: scenario.1.generatedAt
+          )
+        }
+        let renderWidth = icon.size.width * previewScale / displayScale
+        let renderHeight = icon.size.height * previewScale / displayScale
+        let iconCell = NSRect(
+          x: originX + (tile.width - renderWidth) / 2,
+          y: originY + labelStrip + (tile.height - renderHeight) / 2,
+          width: renderWidth,
+          height: renderHeight
+        )
+        icon.draw(in: iconCell, from: .zero, operation: .sourceOver, fraction: 1)
+
+        let label = "\(scenario.0) · \(background.0)"
+        let attrs: [NSAttributedString.Key: Any] = [
+          .foregroundColor: NSColor.white,
+          .font: NSFont.systemFont(ofSize: 10)
+        ]
+        label.draw(at: NSPoint(x: originX, y: originY), withAttributes: attrs)
+      }
+    }
+    sheet.unlockFocus()
+
+    writePNG(sheet, outputPath: outputPath)
+  }
+
   static func runPlate(outputPath: String) {
     let canvasSize = NSSize(width: 1024, height: 1024)
     let iconScale: CGFloat = 40

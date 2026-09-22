@@ -218,3 +218,8 @@ echo "Wrote $APPCAST_PATH"
 echo "Wrote $PAYLOAD_PATH"
 echo "Wrote $MANIFEST_PATH"
 echo "Wrote $RELEASE_NOTES_PATH"
+
+# Bridge for installations still on the Glideslope feed (see package_bridge.sh).
+if [[ "${ALIGHT_SKIP_BRIDGE:-0}" != "1" ]]; then
+  "$ROOT/script/package_bridge.sh"
+fi

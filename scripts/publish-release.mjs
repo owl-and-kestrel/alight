@@ -1,16 +1,13 @@
 #!/usr/bin/env node
 
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { parseProductUpdateManifest, verifySignedReleaseManifest } from "@owl-kestrel/hatch-contracts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const execFileAsync = promisify(execFile);
 const flags = new Set(process.argv.slice(2));
 const publish = flags.has("--publish");
 const allowDirty = flags.has("--allow-dirty");
@@ -67,6 +64,11 @@ const expectedFeedPath = `/alight/${channel}/appcast.xml`;
 const feedURL = new URL(payload.updateFeed.url);
 if (feedURL.origin !== updateOrigin.origin || feedURL.pathname !== expectedFeedPath) throw new Error("Update feed URL is not canonical.");
 
+// Optional Glideslope bridge (script/package_bridge.sh): the same build wrapped
+// as Glideslope.app for the historical feed. Validated here so the dry run
+// covers both channels; publication order is Alight first, then the bridge.
+const bridge = await validateBridge(path.join(releaseDir, "bridge"), { version, build, channel, zipSha256 });
+
 const artifactKey = artifactURL.pathname.slice(1);
 const appcastKey = feedURL.pathname.slice(1);
 const dedupeKey = `alight:${channel}:${version}:${build}:${zipSha256}`;
@@ -81,8 +83,10 @@ const plan = { mode: publish ? "publish" : "dry-run", version, build, channel,
   publicationAuthority: "nest-owned-release-origin", publicationStatus: "frozen-pending-authenticated-nest-client",
   artifactKey, appcastKey,
   artifactSha256: zipSha256, appcastSha256, manifestSignatureVerified: decoded.signatureVerified,
+  bridge,
   releaseEndpoint: new URL("/api/admin/releases", okOrigin).href,
   publicationOrder: ["verify signatures", "Nest stage/commit/read back immutable ZIP", "Nest pointer CAS/read back appcast",
+    ...(bridge ? ["Nest stage/commit/read back bridge ZIP", "Nest pointer CAS/read back Glideslope appcast"] : []),
     "publish Release/Trust ledger", "announce Chirp"],
   chirpPayload, source: payload.source };
 if (!publish) {
@@ -90,28 +94,12 @@ if (!publish) {
   process.exit(0);
 }
 
-// Publication is delegated to the authenticated Nest host client. The
-// publisher never learns credentials and never writes the origin directly.
-const nestCliPath = String(process.env.ALIGHT_NEST_CLI_PATH || "").trim();
-const planFile = String(process.env.ALIGHT_RELEASE_ORIGIN_PLAN_FILE || "").trim();
-const planId = String(process.env.ALIGHT_RELEASE_ORIGIN_PLAN_ID || "").trim();
-const expectedVersion = String(process.env.ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION || "").trim();
-const bridgeArtifactPath = String(process.env.ALIGHT_BRIDGE_ARTIFACT_PATH || "").trim();
-const bridgeAppcastPath = String(process.env.ALIGHT_BRIDGE_APPCAST_PATH || "").trim();
-const bridgeManifestPath = String(process.env.ALIGHT_BRIDGE_MANIFEST_PATH || "").trim();
-if (!nestCliPath || !path.isAbsolute(nestCliPath) || !planFile || !planId || !expectedVersion
-  || !bridgeArtifactPath || !bridgeAppcastPath || !bridgeManifestPath) {
-  throw new Error("Alight publication requires ALIGHT_NEST_CLI_PATH, ALIGHT_RELEASE_ORIGIN_PLAN_FILE, ALIGHT_RELEASE_ORIGIN_PLAN_ID, ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION, and the three ALIGHT_BRIDGE_*_PATH values.");
-}
-const delegated = await execFileAsync(process.execPath, [nestCliPath, "deploy", "plan", "execute", "--file", planFile,
-  "--id", planId, "--expected-version", expectedVersion, "--artifact-path", zipPath, "--appcast-path", appcastPath,
-  "--manifest-path", manifestPath, "--bridge-artifact-path", bridgeArtifactPath, "--bridge-appcast-path", bridgeAppcastPath,
-  "--bridge-manifest-path", bridgeManifestPath, "--yes", "--json"], { cwd: root, env: process.env, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 });
-const delegatedResult = JSON.parse(delegated.stdout);
-if (delegatedResult?.type !== "ok.nest.release-origin-publication-execution.v1" || delegatedResult.status !== "completed") {
-  throw new Error("Nest release-origin client returned an invalid completion receipt.");
-}
-process.stdout.write(`${JSON.stringify(delegatedResult, null, 2)}\n`);
+// Direct R2 mutation is retired. Keep the local validation/dry-run surface
+// useful while publication is frozen, then fail closed before any credential
+// lookup or remote write. Delete this gate only when the authenticated Nest
+// release-origin client owns archive-first/pointer-last publication and exact
+// public readback.
+throw new Error("Alight publication is frozen until the authenticated Nest release-origin client is installed; direct R2 writes are retired.");
 
 function validateManifest(value, expected) {
   parseProductUpdateManifest(value);
@@ -121,6 +109,45 @@ function validateManifest(value, expected) {
     || typeof value.source.dirty !== "boolean" || value.source.buildConfiguration !== "release") throw new Error("Release manifest is missing exact source provenance.");
   if (!value.updateFeed || value.updateFeed.format !== "sparkle.appcast.v2" || !/^[0-9a-f]{64}$/u.test(value.updateFeed.sha256 || "")) throw new Error("Release manifest updateFeed is invalid.");
   if (!Array.isArray(value.artifacts) || value.artifacts.filter((x) => x.platform === "macos").length !== 1) throw new Error("Release manifest must contain exactly one macOS artifact.");
+}
+
+async function validateBridge(directory, expected) {
+  const manifestFile = path.join(directory, "glideslope-bridge.json");
+  if (!existsSync(manifestFile)) return null;
+  const zipFile = path.join(directory, "Glideslope.zip");
+  const appcastFile = path.join(directory, "appcast.xml");
+  for (const required of [zipFile, appcastFile]) {
+    if (!existsSync(required)) throw new Error(`Bridge artifact is missing: ${required}`);
+  }
+  const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+  if (manifest.schema !== "ok.product-bridge.v1" || manifest.appId !== "alight" || manifest.legacyAppId !== "glideslope"
+    || manifest.hostBundleId !== "com.owlandkestrel.glideslope" || manifest.bundleId !== "com.owlandkestrel.alight"
+    || manifest.version !== expected.version || manifest.build !== expected.build || manifest.channel !== expected.channel) {
+    throw new Error("Bridge manifest identity does not match package metadata.");
+  }
+  const zip = await readFile(zipFile);
+  const appcast = await readFile(appcastFile);
+  const bridgeZipSha256 = sha256Bytes(zip);
+  const bridgeAppcastSha256 = sha256Bytes(appcast);
+  const artifact = (manifest.artifacts || []).find((item) => item.platform === "macos");
+  if (!artifact || artifact.archiveAppName !== "Glideslope.app") throw new Error("Bridge manifest must describe one macOS Glideslope.app artifact.");
+  if (artifact.sha256 !== bridgeZipSha256 || artifact.sizeBytes !== zip.length) throw new Error("Bridge ZIP bytes do not match the bridge manifest.");
+  if (bridgeZipSha256 === expected.zipSha256) throw new Error("Bridge ZIP must be the Glideslope.app wrapping, not the Alight archive.");
+  if (manifest.legacyFeed?.format !== "sparkle.appcast.v2" || manifest.legacyFeed.sha256 !== bridgeAppcastSha256) throw new Error("Bridge appcast bytes do not match the bridge manifest.");
+  const item = parseAppcast(appcast.toString("utf8"));
+  if (item.version !== expected.version || item.build !== String(expected.build)) throw new Error("Bridge appcast version/build does not match package metadata.");
+  if (item.url !== artifact.url || item.length !== String(zip.length)) throw new Error("Bridge appcast enclosure does not match the bridge ZIP.");
+  if (!item.signature) throw new Error("Bridge appcast enclosure is missing an Ed25519 signature.");
+  const bridgeURL = new URL(artifact.url);
+  if (bridgeURL.origin !== updateOrigin.origin || bridgeURL.pathname !== `/glideslope/releases/v${expected.version}/${bridgeZipSha256}/Glideslope.zip`) {
+    throw new Error("Bridge artifact URL is not the content-addressed canonical Glideslope release-origin URL.");
+  }
+  const legacyFeedURL = new URL(manifest.legacyFeed.url);
+  if (legacyFeedURL.origin !== updateOrigin.origin || legacyFeedURL.pathname !== `/glideslope/${expected.channel}/appcast.xml`) throw new Error("Bridge feed URL is not the canonical Glideslope feed.");
+  return {
+    artifactKey: bridgeURL.pathname.slice(1), appcastKey: legacyFeedURL.pathname.slice(1),
+    artifactSha256: bridgeZipSha256, appcastSha256: bridgeAppcastSha256, hostBundleId: manifest.hostBundleId
+  };
 }
 
 function parseAppcast(xml) {

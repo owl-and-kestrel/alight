@@ -19,6 +19,67 @@ struct GaugeIconStyle {
   let redlineColor: NSColor
 }
 
+enum DisplayMode: String, CaseIterable, Sendable {
+  case gauge
+  case meters
+
+  var menuTitle: String {
+    switch self {
+    case .gauge: "Gauge"
+    case .meters: "Meters"
+    }
+  }
+}
+
+enum MeterFillMode: String, CaseIterable, Sendable {
+  case fill
+  case empty
+
+  var menuTitle: String {
+    switch self {
+    case .fill: "Fill (Used)"
+    case .empty: "Empty (Remaining)"
+    }
+  }
+}
+
+enum MeterDirection: String, CaseIterable, Sendable {
+  case leftToRight
+  case rightToLeft
+
+  var menuTitle: String {
+    switch self {
+    case .leftToRight: "Left to Right"
+    case .rightToLeft: "Right to Left"
+    }
+  }
+}
+
+enum MeterLabelMode: String, CaseIterable, Sendable {
+  /// A small provider-coloured square at the left of each card.
+  case swatch
+  case none
+
+  var menuTitle: String {
+    switch self {
+    case .swatch: "Color Swatch"
+    case .none: "None (Bars Only)"
+    }
+  }
+}
+
+struct MeterIconStyle: Sendable {
+  let width: CGFloat
+  let fillMode: MeterFillMode
+  let direction: MeterDirection
+  let labelMode: MeterLabelMode
+  let codexColor: NSColor
+  let claudeColor: NSColor
+  let antigravityColor: NSColor
+  /// Kept for the gauge-shared colour settings; Meters mode does not draw it.
+  var redlineColor: NSColor = GaugeColorChoice.red.nsColor
+}
+
 enum IconSliderSetting: String, CaseIterable, Sendable {
   case fableStarSize
   case fableStarRadius
@@ -32,6 +93,7 @@ enum IconSliderSetting: String, CaseIterable, Sendable {
   case scaleRadius
   case redlineWidth
   case hubSize
+  case meterWidth
 
   var menuTitle: String {
     switch self {
@@ -47,6 +109,7 @@ enum IconSliderSetting: String, CaseIterable, Sendable {
     case .scaleRadius: "Scale Radius"
     case .redlineWidth: "Redline Width"
     case .hubSize: "Hub Dot Size"
+    case .meterWidth: "Meter Width"
     }
   }
 
@@ -64,6 +127,7 @@ enum IconSliderSetting: String, CaseIterable, Sendable {
     case .scaleRadius: 0.0...18.0
     case .redlineWidth: 0.8...3.8
     case .hubSize: 0.0...1.4
+    case .meterWidth: 20.0...72.0
     }
   }
 
@@ -81,6 +145,7 @@ enum IconSliderSetting: String, CaseIterable, Sendable {
     case .scaleRadius: 8.60
     case .redlineWidth: 2.30
     case .hubSize: 0.55
+    case .meterWidth: 36.0
     }
   }
 }
@@ -143,6 +208,14 @@ enum AppSettings {
   private static let claudeColorKey = "claudeColor"
   private static let antigravityColorKey = "antigravityColor"
   private static let redlineColorKey = "redlineColor"
+  private static let displayModeKey = "displayMode"
+  private static let meterFillModeKey = "meterFillMode"
+  private static let meterDirectionKey = "meterDirection"
+  private static let meterLabelModeKey = "meterLabelMode"
+  // Text labels were removed from Meters mode; these keys are only cleared.
+  private static let legacyCodexMeterLabelKey = "codexMeterLabel"
+  private static let legacyClaudeMeterLabelKey = "claudeMeterLabel"
+  private static let legacyAntigravityMeterLabelKey = "antigravityMeterLabel"
   private static let legacyFableStarScaleKey = "fableStarScale"
   private static let legacyHandScaleKey = "handScale"
   private static let legacyScaleDotScaleKey = "scaleDotScale"
@@ -152,6 +225,87 @@ enum AppSettings {
   static let defaultClaudeColor = GaugeColorChoice.coral
   static let defaultAntigravityColor = GaugeColorChoice.purple
   static let defaultRedlineColor = GaugeColorChoice.red
+  static let defaultDisplayMode = DisplayMode.gauge
+  static let defaultMeterFillMode = MeterFillMode.fill
+  static let defaultMeterDirection = MeterDirection.leftToRight
+  static let defaultMeterLabelMode = MeterLabelMode.swatch
+
+  static var displayMode: DisplayMode {
+    get {
+      guard
+        let raw = UserDefaults.standard.string(forKey: displayModeKey),
+        let mode = DisplayMode(rawValue: raw)
+      else {
+        return defaultDisplayMode
+      }
+      return mode
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: displayModeKey)
+    }
+  }
+
+  static var meterFillMode: MeterFillMode {
+    get {
+      guard
+        let raw = UserDefaults.standard.string(forKey: meterFillModeKey),
+        let mode = MeterFillMode(rawValue: raw)
+      else {
+        return defaultMeterFillMode
+      }
+      return mode
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: meterFillModeKey)
+    }
+  }
+
+  static var meterDirection: MeterDirection {
+    get {
+      guard
+        let raw = UserDefaults.standard.string(forKey: meterDirectionKey),
+        let direction = MeterDirection(rawValue: raw)
+      else {
+        return defaultMeterDirection
+      }
+      return direction
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: meterDirectionKey)
+    }
+  }
+
+  static var meterLabelMode: MeterLabelMode {
+    get {
+      guard
+        let raw = UserDefaults.standard.string(forKey: meterLabelModeKey),
+        let mode = MeterLabelMode(rawValue: raw)
+      else {
+        return defaultMeterLabelMode
+      }
+      return mode
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: meterLabelModeKey)
+    }
+  }
+
+  static var meterWidth: CGFloat {
+    CGFloat(value(for: .meterWidth))
+  }
+
+  static var meterStyle: MeterIconStyle {
+    MeterIconStyle(
+      width: meterWidth,
+      fillMode: meterFillMode,
+      direction: meterDirection,
+      labelMode: meterLabelMode,
+      codexColor: codexColor.nsColor,
+      claudeColor: claudeColor.nsColor,
+      antigravityColor: antigravityColor.nsColor,
+      redlineColor: redlineColor.nsColor
+    )
+  }
 
   static var iconStyle: GaugeIconStyle {
     GaugeIconStyle(
@@ -231,6 +385,13 @@ enum AppSettings {
       claudeColorKey,
       antigravityColorKey,
       redlineColorKey,
+      displayModeKey,
+      meterFillModeKey,
+      meterDirectionKey,
+      meterLabelModeKey,
+      legacyCodexMeterLabelKey,
+      legacyClaudeMeterLabelKey,
+      legacyAntigravityMeterLabelKey,
       legacyFableStarScaleKey,
       legacyHandScaleKey,
       legacyScaleDotScaleKey,

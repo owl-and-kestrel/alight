@@ -66,6 +66,25 @@ struct ClaudeCredentialResolutionTests {
 
     #expect(credential.accessToken == "keychain-token")
     #expect(credential.expiresAt == Date(timeIntervalSince1970: 1_800_000_000))
+    #expect(credential.hasRefreshToken == false)
+  }
+
+  @Test("Keychain refresh token is recorded only as presence")
+  func keychainRefreshTokenPresence() throws {
+    let resolve = { (refreshField: String) in
+      try ClaudeUsageClient.resolveCredential(
+        environment: [:],
+        homeDirectory: home,
+        readFile: { _ in nil },
+        readKeychain: {
+          #"{"claudeAiOauth":{"accessToken":"keychain-token","expiresAt":1800000000000"# + refreshField + "}}"
+        }
+      )
+    }
+
+    #expect(try resolve(#","refreshToken":"nonsecret-refresh""#).hasRefreshToken)
+    #expect(try resolve(#","refreshToken":"  ""#).hasRefreshToken == false)
+    #expect(try resolve("").hasRefreshToken == false)
   }
 
   @Test("malformed Keychain payload fails closed")

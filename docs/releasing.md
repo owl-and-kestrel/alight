@@ -157,34 +157,64 @@ credential, or a Plumage session.
 
 ### Rename cutover and local data
 
-Because the bundle identifier changes, an installed Glideslope app cannot
-silently become Alight through the new feed. Install the reviewed Alight bridge
-package manually. On its first launch, Alight shows a one-time notice when it
-finds legacy non-secret state. Choose **Import Settings** to copy the valid
-native cache and allowlisted appearance settings before the status item starts,
-or choose **Start Fresh**. The destination is never overwritten and the old
-cache/domain remains as recovery evidence. For command-line state, quit Alight
-and run `npm run migrate:data`; that command previews by default and requires
-`--apply` to copy valid CLI state. UserDefaults settings are migrated only by
-the native Import Settings choice, which applies an allowlist before launch.
-Choosing **Later** leaves the prompt available on the next launch.
+Installed Glideslope apps are carried across by a **bridge release on the
+historical Glideslope feed**, produced by `script/package_bridge.sh` (run
+automatically by `package_release.sh`, skip with `ALIGHT_SKIP_BRIDGE=1`).
+Sparkle installs an update into the host's existing path and locates the app
+inside the archive by the host's file name, falling back to the host's bundle
+identifier (`Autoupdate/SUInstaller.m` in the pinned 2.9.4 checkout). It does
+not compare the incoming app's bundle identifier with the host's; the
+"Failed to match host bundle identifiers" check in `AppInstaller.m` compares
+the running host with itself. An archive containing only `Alight.app` is
+therefore invisible to a `Glideslope.app` host, while an archive containing
+the identical Alight build named `Glideslope.app` installs cleanly. The bridge
+outputs are:
+
+```text
+dist/release/bridge/Glideslope.zip        # release Alight.app, renamed
+dist/release/bridge/Glideslope.zip.sha256
+dist/release/bridge/appcast.xml           # signed, for /glideslope/stable/
+dist/release/bridge/glideslope-bridge.json
+```
+
+The bridge archive is the same bytes as the release build (verified with
+`codesign --verify --deep --strict` after the rename; the ad-hoc seal covers
+bundle contents, not the folder name) and is signed with the same Sparkle
+Ed25519 key the old apps already trust. Its content-addressed URL is
+`/glideslope/releases/v<version>/<sha256>/Glideslope.zip`, and its appcast
+advances `/glideslope/stable/appcast.xml` last, exactly like the Alight
+channel. Publish the Alight release first, then the bridge, so a bridged app's
+first check against the Alight feed finds a matching build.
+
+After Sparkle relaunches the bridged app it is Alight (bundle
+`com.owlandkestrel.alight`, `SUFeedURL` on the Alight feed) still living at
+`…/Glideslope.app`. On launch `BridgeRelocation` renames the bundle to
+`Alight.app` beside it when that name is free and the directory is writable,
+then relaunches from the new path. If the rename is not possible the app keeps
+running from the old name; later Alight archives still match it by bundle
+identifier. Login items are bookmark-based and follow the rename.
+
+On its first launch, Alight shows a one-time notice when it finds legacy
+non-secret state. Choose **Import Settings** to copy the valid native cache and
+allowlisted appearance settings before the status item starts, or choose
+**Start Fresh**. The destination is never overwritten and the old cache/domain
+remains as recovery evidence. For command-line state, quit Alight and run
+`npm run migrate:data`; that command previews by default and requires `--apply`
+to copy valid CLI state. UserDefaults settings are migrated only by the native
+Import Settings choice, which applies an allowlist before launch. Choosing
+**Later** leaves the prompt available on the next launch.
 
 Dedicated token files are user-managed credentials. The migration command never
 reads or copies token bytes; it reports the old and new paths so the owner can
 copy them with mode `0600` during the reviewed cutover. Shared Claude and Gemini
 Keychain items retain their provider-owned identities and are read only. Remove
-the migration command after one completed Alight release cycle and verified
-user migration; until then, it is the only supported old-path migration tool.
+the migration command and the bridge packaging after one completed Alight
+release cycle and verified user migration.
 
-This manual bridge is required by Sparkle's installer contract, not just by the
-feed layout. In the pinned Sparkle 2.9.4 source checkout (after dependency
-resolution), the installer compares the incoming app's
-`CFBundleIdentifier` with the running host before installation and rejects a
-mismatch (`.build/checkouts/Sparkle/Autoupdate/SUInstaller.m` and
-`AppInstaller.m`). Since the old host is
-`com.owlandkestrel.glideslope` and Alight is
-`com.owlandkestrel.alight`, no Alight archive is advertised as an automatic
-upgrade for an existing Glideslope installation.
+The bridge was exercised locally on 2026-09-22: a copy of the installed
+Glideslope 0.5.1 (build 11) with its feed pointed at a loopback server carrying
+the bridge appcast downloaded, verified, and installed the Alight 0.6.0 build in
+place through Sparkle's normal automatic-update path.
 
 ## Technical-Alpha Installation And Apple Transition
 
@@ -257,17 +287,13 @@ mutation-free plan:
 npm run release:dry-run
 ```
 
-`release:publish` delegates to the authenticated Nest release-origin client;
-the native publisher never reads credentials or writes the origin. Set
-`ALIGHT_NEST_CLI_PATH`, `ALIGHT_RELEASE_ORIGIN_PLAN_FILE`,
-`ALIGHT_RELEASE_ORIGIN_PLAN_ID`, `ALIGHT_RELEASE_ORIGIN_EXPECTED_VERSION`,
-and the three private `ALIGHT_BRIDGE_ARTIFACT_PATH`,
-`ALIGHT_BRIDGE_APPCAST_PATH`, and `ALIGHT_BRIDGE_MANIFEST_PATH` values. The
-Nest client validates the admitted plan, claims its lease, publishes Alight,
-checks the public Alight page, then publishes the one final Glideslope bridge:
+Routine publication is intentionally frozen during the owned-origin cutover.
+`release:publish` fails closed before credential lookup or any remote write.
+It will be restored only when the authenticated Nest client owns the complete
+archive-first/pointer-last transaction:
 
 ```sh
-npm run release:publish  # requires the complete reviewed plan and environment
+npm run release:publish  # expected to fail closed while frozen
 ```
 
 The dry-run still validates the manifest, exact appcast shape,
@@ -317,6 +343,8 @@ failure remains safe.
 Before publication:
 
 - Confirm version `0.6.0`, build `13`, source commit, and intended clean tree.
+- Confirm `dist/release/bridge/` exists and its `glideslope-bridge.json` names
+  the same version and build as the Alight manifest.
 - Confirm `codesign --verify --deep --strict dist/Alight.app` succeeds.
 - Confirm the packaged feed and archive signatures verify.
 - Install the ZIP on a separate Mac and test launch, usage-cache recovery,
@@ -326,7 +354,9 @@ Before publication:
 
 After publication:
 
-- Check from the manually installed Alight bridge and confirm automatic update.
+- Check from an installed Glideslope app and confirm it updates to Alight,
+  renames itself to `Alight.app`, and then checks the Alight feed.
+- Check from an installed Alight app and confirm automatic update.
 - Confirm opting out of **Install Updates Automatically** preserves scheduled
   update checks.
 - Read the Release/Trust channel and confirm version, artifact URL, and digest.

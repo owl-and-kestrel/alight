@@ -99,6 +99,11 @@ final class UsageStore {
           : min(Self.claudeMaxBackoff, claudeBackoff * 2)
         claudeNextAllowed = now.addingTimeInterval(claudeBackoff)
       }
+      claudeNextAllowed = Self.claudePollTime(
+        scheduled: claudeNextAllowed,
+        credentialExpiresAt: fresh.credentialExpiresAt,
+        now: now
+      )
       claudeResult = fresh
       Self.logClaudeLiveAttempt(fresh, now: now, nextAllowed: claudeNextAllowed)
     } else {
@@ -124,6 +129,20 @@ final class UsageStore {
       generatedAt: now,
       results: [reconciledCodex, reconciledClaude, reconciledAntigravity]
     )
+  }
+
+  /// Pull the next poll forward so it lands inside the CLI's pre-expiry
+  /// renewal window. Without this, a five-minute cadence can straddle the
+  /// four-minute window and only notice the token after it has expired.
+  static func claudePollTime(scheduled: Date, credentialExpiresAt: Date?, now: Date) -> Date {
+    guard let credentialExpiresAt else {
+      return scheduled
+    }
+    let renewal = ClaudeCLIRenewal.renewalTime(for: credentialExpiresAt)
+    guard renewal > now else {
+      return scheduled
+    }
+    return min(scheduled, renewal)
   }
 
   private static func logClaudeLiveAttempt(_ result: ProviderResult, now: Date, nextAllowed: Date) {

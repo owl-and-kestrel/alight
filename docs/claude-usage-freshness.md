@@ -92,6 +92,64 @@ the app read the refreshed access token and `/api/oauth/usage` returned live
 windows again. This suggests the safest refresh strategy is to let Claude Code
 own refresh/write-back, while Alight remains a read-only observer.
 
+## CLI Renewal (2026-09-17)
+
+The Keychain login lapsed again from 2026-07-10 until a manual
+`claude auth login` on 2026-09-17. Root cause: Claude Code access tokens last
+about eight hours and are renewed only when the standalone `claude` CLI runs
+inside its five-minute pre-expiry window. The Claude desktop app's Code tab gets
+its login from the desktop host and never touches `Claude Code-credentials`, so a
+desktop-first user's CLI login is never renewed. By September the item no longer
+had a refresh token, so running the CLI could not recover it; only signing in
+could.
+
+Reading the desktop app's login instead was rejected: it is a claude.ai web
+session cookie behind `Claude Safe Storage`, which grants full account access
+rather than scoped OAuth access.
+
+Alight now asks the CLI to renew its own login (`ClaudeCLIRenewal`). When the
+Keychain token is within four minutes of expiry, or already expired, and the
+item still has a refresh token, Alight runs
+`claude mcp get __alight_token_renewal__` and then re-reads the Keychain:
+
+- No inference request is sent. Loading claude.ai connectors renews the OAuth
+  token first; the unknown server name then exits 1 without starting any MCP
+  server.
+- `claude auth status` does not work for this: in Claude Code 2.1.175 it only
+  checks that a login exists and never renews it.
+- The run uses an empty working directory and drops `CLAUDE_CODE_*`,
+  `ANTHROPIC_*`, and `CLAUDECODE` variables, which would otherwise bypass the
+  Keychain login. Attempts are at least two minutes apart and time out after
+  30 seconds.
+- The CLI is found via `ALIGHT_CLAUDE_CLI`, common install paths (including
+  the newest nvm Node), and then `$SHELL -lc 'command -v claude'`.
+- Alight records only whether a refresh token exists, never its value, and
+  still never writes the Keychain.
+- A Keychain item with no refresh token shows "Claude Code login lapsed — sign
+  in again".
+
+### Timing and grace (2026-09-22)
+
+The first renewal cut still produced visible "Sign in to Claude…" flaps roughly
+once per token lifetime. Two causes:
+
+- The renewal was only attempted from the five-minute Claude poll. A poll at
+  four and a half minutes before expiry did not renew (outside the four-minute
+  lead), and the next poll arrived after expiry, so every cycle briefly showed
+  an expired credential and a sign-in prompt before the retry renewed it.
+- An expired token with a refresh token was reported with `needsAuth`, so the
+  menu offered Sign In even though the CLI would renew it a minute later.
+
+Now every Claude result carries the credential's expiry, and `UsageStore` pulls
+the next poll forward to `expiresAt − 4 min + 15 s` (`ClaudeCLIRenewal.
+renewalTime`), which lands inside the CLI's five-minute window even with the
+one-minute refresh loop. An expired-but-refreshable login is reported with
+source `renewing` and no sign-in prompt for a ten-minute grace period
+(`ClaudeUsageClient.renewalGrace`); the renewal runs at most once a minute
+during that time. A 401 with a refreshable login runs one forced renewal and
+retries the request before being treated as a credential failure. Cached hands
+stay visible throughout, as before.
+
 ## Additional Usage Factors
 
 A redacted live payload check on 2026-07-04 confirmed that `/api/oauth/usage`
@@ -139,6 +197,11 @@ open questions.
   every minute), because Claude Code may refresh the Keychain outside Alight.
 - Do not implement direct refresh-token use unless the exact Claude Code OAuth
   refresh request shape and refresh-token rotation behavior have been validated.
+  Near expiry, let the `claude` CLI renew its own login (see CLI Renewal), and
+  schedule that poll from the token's expiry rather than the gentle cadence.
+- An expired login that still has a refresh token is a renewal in progress:
+  report it as renewing, retry once a minute, and offer Sign In only after the
+  grace period or when no refresh token remains.
 - HTTP 429 should respect the server's `Retry-After` header. Do not stretch a
   short endpoint cooldown into the generic Claude backoff.
 - A cached hand remains eligible only until its own reset timestamp. Its pressure

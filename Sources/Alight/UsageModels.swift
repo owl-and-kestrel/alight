@@ -103,7 +103,7 @@ enum PressureBand: String, Codable, Sendable {
   }
 }
 
-struct UsageWindow: Codable, Identifiable, Sendable {
+struct UsageWindow: Codable, Identifiable, Equatable, Sendable {
   let provider: Provider
   let speed: WindowSpeed
   let scope: UsageScope?
@@ -203,6 +203,10 @@ struct ProviderResult: Sendable {
   var cacheAgeSeconds: TimeInterval? = nil
   /// Server-provided retry delay for transient failures such as HTTP 429.
   var retryAfterSeconds: TimeInterval? = nil
+  /// When the credential behind this reading expires, if known. Lets the
+  /// scheduler poll (and renew) just before expiry instead of discovering an
+  /// expired token on the next gentle poll.
+  var credentialExpiresAt: Date? = nil
 
   var cacheAgeDisplay: String? {
     cacheAgeSeconds.map(Self.compactDuration)
@@ -224,7 +228,8 @@ struct ProviderResult: Sendable {
     error: String,
     needsAuth: Bool = false,
     cacheAgeSeconds: TimeInterval? = nil,
-    retryAfterSeconds: TimeInterval? = nil
+    retryAfterSeconds: TimeInterval? = nil,
+    credentialExpiresAt: Date? = nil
   ) -> ProviderResult {
     ProviderResult(
       provider: provider,
@@ -234,7 +239,8 @@ struct ProviderResult: Sendable {
       windows: [],
       needsAuth: needsAuth,
       cacheAgeSeconds: cacheAgeSeconds,
-      retryAfterSeconds: retryAfterSeconds
+      retryAfterSeconds: retryAfterSeconds,
+      credentialExpiresAt: credentialExpiresAt
     )
   }
 

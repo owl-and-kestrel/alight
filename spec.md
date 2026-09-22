@@ -74,6 +74,19 @@ Each hand uses a pace-relative consumption scale: pegged left = `0%` consumed, c
 
 When a provider has no data its hands are simply omitted; the gauge degrades to whatever providers are available.
 
+### Display Modes
+
+Alight supports two menu-bar display modes, switchable from the **Display Mode** menu:
+
+1. **Gauge Mode (default)**: The circular dial with pace-relative hands, redline danger arc, Fable star marker, and reset clock in the lower arc.
+2. **Meters Mode**: One dark card per provider stacked within the menu bar icon height (22pt):
+   - **Cards**: Codex, Claude, Antigravity in that order, every card the same height regardless of how many tracks it holds. A card with an active scoped weekly limit (Claude's Fable) grows to hold a third, thinnest track. Dropdown-only scoped rows are not drawn.
+   - **Swatch**: The left of each card is a small square in the provider color, so a maxed-out (all-white) card is still identifiable; bars-only mode omits it.
+   - **Tracks**: One per limit window in the provider color; weekly on top and thicker, ~5h below and thinner. A lone track fills its card.
+   - **Bar**: A white bar on the track shows usage. **Fill (Used)** grows it as quota is consumed; **Empty (Remaining)** drains it. **Direction** sets the origin side.
+   - **Pace dot**: A dot on each track marks `elapsedSeconds / limitWindowSeconds`. Where it lies on the white bar it is drawn in the provider color (usage is ahead of the clock); where it lies on the track it is drawn white (the clock is ahead of usage); straddling the bar's edge it is two-toned (on pace).
+   - **Meter Width**: Configurable via slider (20pt to 72pt, default 36pt). The menu-bar item resizes to match.
+
 When a provider needs credentials (not signed in, or token expired/rejected), the dropdown surfaces a **Sign in to …** action that launches that CLI's login in Terminal (`codex login` / `claude auth login` / `agy`).
 
 The dropdown groups windows under each provider:
@@ -116,7 +129,7 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
   no active scoped usage is silently hidden. Duplicate scope identities keep
   the first payload occurrence, and entries without a model identity are
   skipped rather than guessed.
-- **Read-only.** Alight never refreshes or rewrites the Keychain item, so it cannot invalidate the refresh token the Claude Code app depends on. An expired access token degrades to `token expired — open Claude Code to refresh`.
+- **Read-only.** Alight never refreshes or rewrites the Keychain item, so it cannot invalidate the refresh token the Claude Code app depends on. Near expiry Alight asks the `claude` CLI to renew its own login, timing that poll to the token's expiry rather than the five-minute cadence. An expired token that still has a refresh token is reported as `renewing Claude Code login…` (no sign-in prompt) for a ten-minute grace period while renewal retries once a minute; only after that, or when no refresh token remains, does the menu offer **Sign in**. An HTTP 401 with a refreshable login triggers one renewal-and-retry before it is treated as a credential failure.
 - **Gentle polling.** The usage endpoint rate-limits aggressively, so Claude is polled on a five-minute cadence with exponential backoff on failure, decoupled from Codex's 60s loop. Manual Refresh forces a live Claude attempt. HTTP `429` responses use Anthropic's `Retry-After` header instead of the generic backoff, and scheduled/manual refreshes share one in-flight task.
 
 ### Antigravity
@@ -218,6 +231,10 @@ Automatic sources are intentionally primary. Manual input exists only as a resil
 
 - The native Swift app is canonical: provider clients feed `UsageStore`, which
   reconciles persistent last-known data and renders the menu-bar status item.
+- Two menu-bar display modes are supported: the circular Gauge dial (pace hands,
+  reset clock, and Fable star) and horizontal Meters (grouped by provider with
+  differential track thickness for fast vs. weekly cadence, provider badges,
+  and a two-tone pace dot).
 - The Node CLI and SwiftBar script remain optional diagnostics/fallbacks and do
   not own native cache or scheduling behavior.
 - Sparkle's signed R2 feed and archive are the native updater's release truth.

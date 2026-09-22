@@ -11,7 +11,7 @@ final class StatusItemController {
       button.bezelStyle = .regularSquare
       button.isBordered = false
       button.imagePosition = .imageOnly
-      button.imageScaling = .scaleProportionallyUpOrDown
+      button.imageScaling = .scaleProportionallyDown
       button.toolTip = "Alight"
     }
     statusItem.menu = makeMenu()
@@ -51,6 +51,8 @@ final class StatusItemController {
       addProviderSection(provider, to: menu)
     }
 
+    menu.addItem(.separator())
+    addDisplayModeSection(to: menu)
     menu.addItem(.separator())
     addReleaseSection(to: menu)
     menu.addItem(.separator())
@@ -106,8 +108,37 @@ final class StatusItemController {
     }
   }
 
+  private func addDisplayModeSection(to menu: NSMenu) {
+    let item = NSMenuItem(title: "Display Mode", action: nil, keyEquivalent: "")
+    let submenu = NSMenu()
+    submenu.autoenablesItems = false
+    let currentMode = AppSettings.displayMode
+
+    for mode in DisplayMode.allCases {
+      let child = NSMenuItem(title: mode.menuTitle, action: #selector(selectDisplayMode(_:)), keyEquivalent: "")
+      child.representedObject = mode.rawValue
+      if currentMode == mode {
+        child.state = .on
+      }
+      submenu.addItem(child)
+    }
+    item.submenu = submenu
+    menu.addItem(item)
+  }
+
   private func updateIcon() {
-    statusItem.button?.image = GaugeIconRenderer.image(status: store.status, style: AppSettings.iconStyle)
+    let mode = AppSettings.displayMode
+    let image: NSImage
+    switch mode {
+    case .gauge:
+      statusItem.length = 24
+      image = GaugeIconRenderer.image(status: store.status, style: AppSettings.iconStyle)
+    case .meters:
+      let style = AppSettings.meterStyle
+      statusItem.length = MeterIconRenderer.size(for: style).width + 6
+      image = MeterIconRenderer.image(status: store.status, style: style)
+    }
+    statusItem.button?.image = image
     statusItem.button?.toolTip = store.status.summary
   }
 
@@ -187,6 +218,13 @@ final class StatusItemController {
     ))
 
     settingsMenu.addItem(.separator())
+    addDisabledItem("Meters", to: settingsMenu)
+    settingsMenu.addItem(meterLabelModeSubmenu())
+    settingsMenu.addItem(meterFillModeSubmenu())
+    settingsMenu.addItem(meterDirectionSubmenu())
+    settingsMenu.addItem(sliderItem(for: .meterWidth))
+
+    settingsMenu.addItem(.separator())
     settingsMenu.addItem(NSMenuItem(title: "Reset Icon Settings", action: #selector(resetIconSettings), keyEquivalent: ""))
 
     settings.submenu = settingsMenu
@@ -222,6 +260,57 @@ final class StatusItemController {
     return item
   }
 
+  private func meterLabelModeSubmenu() -> NSMenuItem {
+    let item = NSMenuItem(title: "Provider Swatch", action: nil, keyEquivalent: "")
+    let submenu = NSMenu()
+    submenu.autoenablesItems = false
+    let current = AppSettings.meterLabelMode
+    for mode in MeterLabelMode.allCases {
+      let child = NSMenuItem(title: mode.menuTitle, action: #selector(setMeterLabelMode(_:)), keyEquivalent: "")
+      child.representedObject = mode.rawValue
+      if current == mode {
+        child.state = .on
+      }
+      submenu.addItem(child)
+    }
+    item.submenu = submenu
+    return item
+  }
+
+  private func meterFillModeSubmenu() -> NSMenuItem {
+    let item = NSMenuItem(title: "Meter Fill Style", action: nil, keyEquivalent: "")
+    let submenu = NSMenu()
+    submenu.autoenablesItems = false
+    let current = AppSettings.meterFillMode
+    for mode in MeterFillMode.allCases {
+      let child = NSMenuItem(title: mode.menuTitle, action: #selector(setMeterFillMode(_:)), keyEquivalent: "")
+      child.representedObject = mode.rawValue
+      if current == mode {
+        child.state = .on
+      }
+      submenu.addItem(child)
+    }
+    item.submenu = submenu
+    return item
+  }
+
+  private func meterDirectionSubmenu() -> NSMenuItem {
+    let item = NSMenuItem(title: "Meter Direction", action: nil, keyEquivalent: "")
+    let submenu = NSMenu()
+    submenu.autoenablesItems = false
+    let current = AppSettings.meterDirection
+    for direction in MeterDirection.allCases {
+      let child = NSMenuItem(title: direction.menuTitle, action: #selector(setMeterDirection(_:)), keyEquivalent: "")
+      child.representedObject = direction.rawValue
+      if current == direction {
+        child.state = .on
+      }
+      submenu.addItem(child)
+    }
+    item.submenu = submenu
+    return item
+  }
+
   private func setTargets(in menu: NSMenu) {
     for item in menu.items {
       if item.action != nil {
@@ -236,6 +325,42 @@ final class StatusItemController {
   private func applyIconSettingChange() {
     updateMenu()
     updateIcon()
+  }
+
+  @objc private func selectDisplayMode(_ sender: NSMenuItem) {
+    guard
+      let raw = sender.representedObject as? String,
+      let mode = DisplayMode(rawValue: raw)
+    else { return }
+    AppSettings.displayMode = mode
+    applyIconSettingChange()
+  }
+
+  @objc private func setMeterLabelMode(_ sender: NSMenuItem) {
+    guard
+      let raw = sender.representedObject as? String,
+      let mode = MeterLabelMode(rawValue: raw)
+    else { return }
+    AppSettings.meterLabelMode = mode
+    applyIconSettingChange()
+  }
+
+  @objc private func setMeterFillMode(_ sender: NSMenuItem) {
+    guard
+      let raw = sender.representedObject as? String,
+      let mode = MeterFillMode(rawValue: raw)
+    else { return }
+    AppSettings.meterFillMode = mode
+    applyIconSettingChange()
+  }
+
+  @objc private func setMeterDirection(_ sender: NSMenuItem) {
+    guard
+      let raw = sender.representedObject as? String,
+      let direction = MeterDirection(rawValue: raw)
+    else { return }
+    AppSettings.meterDirection = direction
+    applyIconSettingChange()
   }
 
   @objc private func setCodexColor(_ sender: NSMenuItem) {
