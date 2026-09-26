@@ -504,7 +504,19 @@ enum AntigravityUsageParser {
       visualStyle = .hand
     } else {
       let bucketDisplayName = (bucket["displayName"] as? String) ?? bucketId
-      let label = isWeekly ? "\(bucketDisplayName) (Weekly)" : "\(bucketDisplayName) (5h)"
+      let label: String
+      if bucketId == "3p-weekly" || (bucketDisplayName.contains("Weekly") && groupName?.lowercased().contains("claude") == true) {
+        label = "3P Models (Weekly)"
+      } else if bucketId == "3p-5h" || ((bucketDisplayName.contains("5h") || bucketDisplayName.contains("Five Hour")) && groupName?.lowercased().contains("claude") == true) {
+        label = "3P Models (5h)"
+      } else {
+        let suffix = isWeekly ? "(Weekly)" : "(5h)"
+        if bucketDisplayName.localizedCaseInsensitiveContains(isWeekly ? "weekly" : "5h") {
+          label = bucketDisplayName
+        } else {
+          label = "\(bucketDisplayName) \(suffix)"
+        }
+      }
       scope = UsageScope(kind: "group", key: bucketId, displayName: label)
       visualStyle = .menuRow
     }

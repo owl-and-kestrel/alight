@@ -47,19 +47,24 @@ final class StatusItemController {
     let menu = statusItem.menu ?? makeMenu()
     menu.removeAllItems()
 
-    for provider in Provider.allCases {
+    let providers = Provider.allCases
+    for (index, provider) in providers.enumerated() {
+      if index > 0 {
+        menu.addItem(.separator())
+      }
       addProviderSection(provider, to: menu)
     }
 
     menu.addItem(.separator())
     addDisplayModeSection(to: menu)
+    addSettingsSection(to: menu)
+
     menu.addItem(.separator())
     addReleaseSection(to: menu)
-    menu.addItem(.separator())
-    addSettingsSection(to: menu)
+
     menu.addItem(.separator())
     menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r"))
-    menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
+    menu.addItem(NSMenuItem(title: "Quit Alight", action: #selector(quit), keyEquivalent: "q"))
 
     setTargets(in: menu)
 
@@ -68,41 +73,55 @@ final class StatusItemController {
 
   private func addProviderSection(_ provider: Provider, to menu: NSMenu) {
     let style = AppSettings.iconStyle
+    let fillMode = AppSettings.meterFillMode
     let result = store.status.result(for: provider)
-    let headerTitle = result?.sourceLabel.map { "\(provider.displayName) (\($0))" } ?? provider.displayName
-    let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
-    header.image = swatchImage(color: GaugeIconRenderer.providerColor(provider, style: style))
-    header.isEnabled = false
-    menu.addItem(header)
+    let color = GaugeIconRenderer.providerColor(provider, style: style)
+
+    let headerItem = NSMenuItem()
+    headerItem.view = ProviderHeaderRowView(provider: provider, color: color, result: result)
+    menu.addItem(headerItem)
+
     if let result, result.ok, !result.windows.isEmpty {
       let now = Date()
       for window in result.windows {
-        let item = NSMenuItem(
-          title: "    \(window.label): \(window.remainingDisplay) left, \(window.pressureDisplay) \(window.band.label.lowercased())",
-          action: nil,
-          keyEquivalent: ""
+        let windowItem = NSMenuItem()
+        windowItem.view = UsageWindowRowView(
+          window: window,
+          accentColor: color,
+          fillMode: fillMode,
+          now: now
         )
-        item.image = markerImage(for: window, style: style)
-        item.isEnabled = false
-        menu.addItem(item)
-        addDisabledItem("        resets \(window.resetDescription(now: now))", to: menu)
+        menu.addItem(windowItem)
       }
+
       if result.source == "cached" {
         let detailParts = [
-          result.cacheAgeDisplay.map { "last live \($0) ago" },
+          result.cacheAgeDisplay.map { "Last live \($0) ago" },
           result.error
         ].compactMap { $0 }
         if !detailParts.isEmpty {
-          addDisabledItem("    \(detailParts.joined(separator: "; "))", to: menu)
+          let noteItem = NSMenuItem()
+          noteItem.view = ProviderNoteRowView(text: detailParts.joined(separator: " · "))
+          menu.addItem(noteItem)
         }
       }
     } else {
-      let reason = result?.error ?? "usage unavailable"
-      addDisabledItem("    \(reason)", to: menu)
+      let reason = result?.error ?? "Usage unavailable"
+      let statusItem = NSMenuItem()
+      statusItem.view = ProviderStatusRowView(reason: reason)
+      menu.addItem(statusItem)
     }
 
     if result?.needsAuth == true {
-      let signIn = NSMenuItem(title: "    Sign in to \(provider.displayName)…", action: #selector(signIn(_:)), keyEquivalent: "")
+      let signIn = NSMenuItem(
+        title: "Sign in to \(provider.displayName)…",
+        action: #selector(signIn(_:)),
+        keyEquivalent: ""
+      )
+      signIn.image = NSImage(
+        systemSymbolName: "person.crop.circle.badge.plus",
+        accessibilityDescription: "Sign In"
+      )
       signIn.representedObject = provider
       menu.addItem(signIn)
     }
@@ -430,45 +449,6 @@ final class StatusItemController {
     NSApplication.shared.terminate(nil)
   }
 
-  private func dotImage(color: NSColor) -> NSImage {
-    let image = NSImage(size: NSSize(width: 10, height: 10))
-    image.lockFocus()
-    color.setFill()
-    NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 8, height: 8)).fill()
-    image.unlockFocus()
-    image.isTemplate = false
-    return image
-  }
-
-  private func markerImage(for window: UsageWindow, style: GaugeIconStyle) -> NSImage {
-    switch window.visualStyle {
-    case .hand, .menuRow:
-      dotImage(color: window.band.nsColor)
-    case .outerStar:
-      starImage(color: GaugeIconRenderer.providerColor(window.provider, style: style))
-    }
-  }
-
-  private func starImage(color: NSColor) -> NSImage {
-    let image = NSImage(size: NSSize(width: 10, height: 10))
-    image.lockFocus()
-    let center = NSPoint(x: 5, y: 5)
-    let vertices: [(CGFloat, CGFloat)] = [
-      (0, 4.3), (1.15, 1.15), (4.3, 0), (1.15, -1.15),
-      (0, -4.3), (-1.15, -1.15), (-4.3, 0), (-1.15, 1.15)
-    ]
-    let path = NSBezierPath()
-    path.move(to: NSPoint(x: center.x + vertices[0].0, y: center.y + vertices[0].1))
-    for vertex in vertices.dropFirst() {
-      path.line(to: NSPoint(x: center.x + vertex.0, y: center.y + vertex.1))
-    }
-    path.close()
-    color.setFill()
-    path.fill()
-    image.unlockFocus()
-    image.isTemplate = false
-    return image
-  }
 
   private func swatchImage(color: NSColor) -> NSImage {
     let image = NSImage(size: NSSize(width: 11, height: 11))
