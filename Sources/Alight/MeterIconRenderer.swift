@@ -125,7 +125,7 @@ enum MeterIconRenderer {
   /// menu rows are excluded.
   static func meterGroups(status: UsageStatus) -> [(provider: Provider, windows: [UsageWindow])] {
     let candidates = status.windows.filter { $0.visualStyle != .menuRow }
-    let providerOrder: [Provider] = [.codex, .claude, .antigravity]
+    let providerOrder: [Provider] = AppSettings.providerOrder
 
     var groups: [(provider: Provider, windows: [UsageWindow])] = []
     for provider in providerOrder {

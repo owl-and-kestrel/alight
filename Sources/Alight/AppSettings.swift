@@ -376,11 +376,57 @@ enum AppSettings {
     }
   }
 
+  static func colorChoice(for provider: Provider) -> GaugeColorChoice {
+    switch provider {
+    case .codex: codexColor
+    case .claude: claudeColor
+    case .antigravity: antigravityColor
+    }
+  }
+
+  static func setColorChoice(_ choice: GaugeColorChoice, for provider: Provider) {
+    switch provider {
+    case .codex: codexColor = choice
+    case .claude: claudeColor = choice
+    case .antigravity: antigravityColor = choice
+    }
+  }
+
+  // MARK: - Provider Display Order
+
+  private static let providerOrderKey = "providerOrder"
+
+  static var providerOrder: [Provider] {
+    get {
+      guard let rawList = UserDefaults.standard.stringArray(forKey: providerOrderKey) else {
+        return [.codex, .claude, .antigravity]
+      }
+      var ordered = rawList.compactMap { Provider(rawValue: $0) }
+      for provider in Provider.allCases where !ordered.contains(provider) {
+        ordered.append(provider)
+      }
+      return ordered
+    }
+    set {
+      UserDefaults.standard.set(newValue.map(\.rawValue), forKey: providerOrderKey)
+    }
+  }
+
+  static func moveProvider(_ provider: Provider, up: Bool) {
+    var order = providerOrder
+    guard let currentIndex = order.firstIndex(of: provider) else { return }
+    let targetIndex = up ? currentIndex - 1 : currentIndex + 1
+    guard targetIndex >= 0 && targetIndex < order.count else { return }
+    order.swapAt(currentIndex, targetIndex)
+    providerOrder = order
+  }
+
   static func resetIconStyle() {
     for setting in IconSliderSetting.allCases {
       UserDefaults.standard.removeObject(forKey: setting.rawValue)
     }
     for key in [
+      providerOrderKey,
       codexColorKey,
       claudeColorKey,
       antigravityColorKey,
