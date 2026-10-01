@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Reads local Codex auth and polls the ChatGPT usage endpoint Codex uses,
 /// then maps the primary/secondary rate-limit windows onto Alight's
@@ -8,9 +9,9 @@ struct CodexUsageClient: Sendable {
 
   func result(now: Date = Date()) async -> ProviderResult {
     do {
-      let payload = try await fetchPayload()
+      let (payload, identity) = try await fetchPayload()
       let windows = CodexUsageParser.windows(from: payload, now: now)
-      return ProviderResult(provider: .codex, ok: !windows.isEmpty, source: "live", error: nil, windows: windows)
+      return ProviderResult(provider: .codex, ok: !windows.isEmpty, source: "live", error: nil, windows: windows, observationIdentity: identity)
     } catch {
       let needsAuth: Bool
       if case UsageError.missingToken = error { needsAuth = true } else { needsAuth = false }
@@ -18,7 +19,7 @@ struct CodexUsageClient: Sendable {
     }
   }
 
-  private func fetchPayload() async throws -> UsagePayload {
+  private func fetchPayload() async throws -> (UsagePayload, UsageObservationIdentity?) {
     let auth = try readAuth()
     guard let token = auth.tokens?.accessToken, !token.isEmpty else {
       throw UsageError.missingToken
@@ -37,7 +38,16 @@ struct CodexUsageClient: Sendable {
       throw UsageError.fetchFailed
     }
 
-    return try JSONDecoder().decode(UsagePayload.self, from: data)
+    // Bind provenance to the exact auth snapshot sent above, never a later
+    // credential read. Only a domain-separated digest reaches derived history.
+    let identity = Self.observationIdentity(accountID: auth.tokens?.accountId, source: usageURL.absoluteString)
+    return (try JSONDecoder().decode(UsagePayload.self, from: data), identity)
+  }
+
+  static func observationIdentity(accountID: String?, source: String) -> UsageObservationIdentity? {
+    guard let accountID, !accountID.isEmpty else { return nil }
+    let digest = SHA256.hash(data: Data("alight.usage-account.v1\u{0}codex\u{0}\(accountID)".utf8))
+    return UsageObservationIdentity(source: source, accountPartition: digest.map { String(format: "%02x", $0) }.joined(), limitIdentity: nil)
   }
 
   private func readAuth() throws -> AuthFile {

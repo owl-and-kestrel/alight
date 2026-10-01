@@ -5,6 +5,7 @@ final class StatusItemController {
   private let statusItem = NSStatusBar.system.statusItem(withLength: 24)
   private let store = UsageStore()
   private let updater = AppUpdater()
+  private lazy var usageInsightsWindow = UsageInsightsWindowController(store: store)
 
   init() {
     if let button = statusItem.button {
@@ -22,6 +23,9 @@ final class StatusItemController {
     }
     SettingsWindowController.shared.onCheckForUpdates = { [weak self] in
       self?.updater.checkForUpdates()
+    }
+    SettingsWindowController.shared.onAutomaticUpdatesChanged = { [weak self] enabled in
+      self?.updater.setAutomaticallyInstallsUpdates(enabled)
     }
     SettingsWindowController.shared.automaticallyInstallsUpdates = updater.automaticallyInstallsUpdates
 
@@ -49,6 +53,7 @@ final class StatusItemController {
   private func makeMenu() -> NSMenu {
     let menu = NSMenu()
     menu.autoenablesItems = false
+    menu.addItem(Self.usageHistoryMenuItem(target: self))
     return menu
   }
 
@@ -69,6 +74,9 @@ final class StatusItemController {
       )
     }
 
+    menu.addItem(.separator())
+
+    menu.addItem(Self.usageHistoryMenuItem(target: self))
     menu.addItem(.separator())
 
     // Footer row with Refresh button, Status text, and Gear button
@@ -93,21 +101,31 @@ final class StatusItemController {
     menu.addItem(footerItem)
 
     // Hidden items for standard keyboard shortcuts
-    let settingsShortcut = NSMenuItem(title: "Settings…", action: #selector(openSettingsWindow), keyEquivalent: ",")
-    settingsShortcut.isHidden = true
+    let settingsShortcut = Self.keyboardShortcut(title: "Settings…", action: #selector(openSettingsWindow), key: ",")
     menu.addItem(settingsShortcut)
 
-    let refreshShortcut = NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r")
-    refreshShortcut.isHidden = true
+    let refreshShortcut = Self.keyboardShortcut(title: "Refresh", action: #selector(refresh), key: "r")
     menu.addItem(refreshShortcut)
 
-    let quitShortcut = NSMenuItem(title: "Quit Alight", action: #selector(quit), keyEquivalent: "q")
-    quitShortcut.isHidden = true
+    let quitShortcut = Self.keyboardShortcut(title: "Quit Alight", action: #selector(quit), key: "q")
     menu.addItem(quitShortcut)
 
     setTargets(in: menu)
 
     statusItem.menu = menu
+  }
+
+  static func keyboardShortcut(title: String, action: Selector, key: String) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+    item.isHidden = true
+    item.allowsKeyEquivalentWhenHidden = true
+    return item
+  }
+
+  static func usageHistoryMenuItem(target: AnyObject) -> NSMenuItem {
+    let item = NSMenuItem(title: "Usage History…", action: #selector(openUsageHistory), keyEquivalent: "")
+    item.target = target
+    return item
   }
 
   private func addProviderSection(
@@ -233,6 +251,10 @@ final class StatusItemController {
       updateMenu()
       updateIcon()
     }
+  }
+
+  @objc private func openUsageHistory() {
+    usageInsightsWindow.showInsights()
   }
 
   @objc private func checkForUpdatesFromMenu() {

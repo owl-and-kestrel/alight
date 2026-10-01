@@ -1,5 +1,19 @@
 import AppKit
 
+/// Native menus use event tracking mode. Their countdown and hover timers must
+/// continue while the menu owns the run loop, including nested color menus.
+@MainActor
+enum MenuTrackingTimer {
+  static func scheduled(timeInterval: TimeInterval, target: Any, selector: Selector,
+    userInfo: Any?, repeats: Bool) -> Timer {
+    let timer = Timer(timeInterval: timeInterval, target: target, selector: selector,
+      userInfo: userInfo, repeats: repeats)
+    RunLoop.main.add(timer, forMode: .common)
+    RunLoop.main.add(timer, forMode: .eventTracking)
+    return timer
+  }
+}
+
 // MARK: - Color Swatch Button (Interactive Hover Intent & Click Affordance)
 
 @MainActor
@@ -53,7 +67,7 @@ final class ColorSwatchButton: NSControl {
 
     // Hover intent: dwelling on the swatch opens the color picker after 220ms
     hoverIntentTimer?.invalidate()
-    hoverIntentTimer = Timer.scheduledTimer(
+    hoverIntentTimer = MenuTrackingTimer.scheduled(
       timeInterval: 0.22,
       target: self,
       selector: #selector(handleHoverIntentTimer),
@@ -361,7 +375,7 @@ final class UsageWindowRowView: NSView {
     super.viewDidMoveToWindow()
     if window != nil {
       liveTimer?.invalidate()
-      liveTimer = Timer.scheduledTimer(
+      liveTimer = MenuTrackingTimer.scheduled(
         timeInterval: 1.0,
         target: self,
         selector: #selector(tickLiveCountdown),
@@ -613,7 +627,7 @@ final class MenuIconButton: NSControl {
     // Hover intent: trigger onHoverIntent if the user hovers for 220ms
     if onHoverIntent != nil {
       hoverIntentTimer?.invalidate()
-      hoverIntentTimer = Timer.scheduledTimer(
+      hoverIntentTimer = MenuTrackingTimer.scheduled(
         timeInterval: 0.22,
         target: self,
         selector: #selector(handleHoverIntentTimer),

@@ -6,6 +6,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
   var onSettingChanged: (@MainActor () -> Void)?
   var onCheckForUpdates: (@MainActor () -> Void)?
+  var onAutomaticUpdatesChanged: (@MainActor (Bool) -> Void)?
   var automaticallyInstallsUpdates: Bool = false {
     didSet {
       autoUpdateCheckbox?.state = automaticallyInstallsUpdates ? .on : .off
@@ -269,9 +270,12 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     scrollView.hasVerticalScroller = true
     scrollView.borderType = .noBorder
 
-    let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 620))
+    // Twelve 52-point slider rows, four headers, section gaps and edge padding.
+    // The entire canvas must fit so the last three controls can be scrolled to.
+    let contentHeight: CGFloat = 12 * 52 + 4 * 22 + 3 * 10 + 80
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: contentHeight))
 
-    var y: CGFloat = 580
+    var y: CGFloat = contentHeight - 40
 
     func addSectionHeader(_ text: String) {
       let label = NSTextField(labelWithString: text)
@@ -447,6 +451,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
   @objc private func toggleAutoUpdates(_ sender: NSButton) {
     let enabled = sender.state == .on
     automaticallyInstallsUpdates = enabled
+    onAutomaticUpdatesChanged?(enabled)
     onSettingChanged?()
   }
 

@@ -1,8 +1,9 @@
 import Foundation
+import Darwin
 import Testing
 @testable import Alight
 
-@Suite("Claude CLI renewal")
+@Suite("Claude CLI renewal", .serialized)
 struct ClaudeCLIRenewalTests {
   private let now = Date(timeIntervalSince1970: 1_800_000_000)
   private let home = URL(fileURLWithPath: "/nonsecret/test-home", isDirectory: true)
@@ -48,6 +49,151 @@ struct ClaudeCLIRenewalTests {
     // An expiry already inside (or past) the window keeps the scheduled time.
     let past = now.addingTimeInterval(60)
     #expect(UsageStore.claudePollTime(scheduled: scheduled, credentialExpiresAt: past, now: now) == scheduled)
+  }
+
+  @Test("server Retry-After outranks an earlier credential renewal window")
+  func retryAfterOutranksExpiry() {
+    let scheduled = now.addingTimeInterval(900)
+    #expect(UsageStore.claudePollTime(scheduled: scheduled,
+      credentialExpiresAt: now.addingTimeInterval(360), now: now,
+      retryAfterSeconds: 900) == scheduled)
+    #expect(UsageStore.claudePollTime(scheduled: now.addingTimeInterval(300),
+      credentialExpiresAt: now.addingTimeInterval(360), now: now,
+      retryAfterSeconds: 900) == scheduled)
+  }
+
+  @Test("a rejected refreshable login exposes sign in after unsuccessful renewal")
+  func failedRenewalExposesSignIn() {
+    let result = ClaudeUsageClient.rejectedCredentialResult(credential(expiresIn: 3600, refresh: true))
+    #expect(result.needsAuth)
+    #expect(!result.ok)
+    #expect(result.error?.contains("sign in") == true)
+    #expect(result.credentialExpiresAt == now.addingTimeInterval(3600))
+  }
+
+  @Test("login shell discovery has a bounded asynchronous deadline")
+  func boundedDiscovery() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "alight-discovery-test-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let shell = directory.appending(path: "fake-shell")
+    try Data("#!/bin/sh\nexec /bin/sleep 2\n".utf8).write(to: shell)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: shell.path)
+    let start = Date()
+    let path = await ClaudeCLIRenewal.loginShellLookup(environment: ["SHELL": shell.path], timeout: 0.05)
+    #expect(path == nil)
+    #expect(Date().timeIntervalSince(start) < 1)
+  }
+
+  private func discoveryFixture(_ script: String) throws -> (URL, URL, URL) {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "alight-process-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let shell = directory.appending(path: "fake-shell")
+    try Data(("#!/bin/sh\n" + script).utf8).write(to: shell)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: shell.path)
+    return (directory, shell, directory.appending(path: "pids"))
+  }
+
+  private func recordedPIDs(_ file: URL) throws -> [pid_t] {
+    try String(contentsOf: file, encoding: .utf8).split(whereSeparator: \.isWhitespace).compactMap { Int32($0) }
+  }
+
+  @Test("normal short discovery preserves output and reaps its child")
+  func successfulDiscoveryCleanup() async throws {
+    let (directory, shell, pids) = try discoveryFixture("echo $$ > \"$ALIGHT_TEST_PID_FILE\"\nprintf '/nonsecret/claude\\n'\n")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = await ClaudeCLIRenewal.loginShellLookup(environment: ["SHELL": shell.path,
+      "ALIGHT_TEST_PID_FILE": pids.path], timeout: 1)
+    #expect(path == "/nonsecret/claude")
+    let pid = try #require(recordedPIDs(pids).first)
+    #expect(kill(pid, 0) == -1 && errno == ESRCH)
+  }
+
+  @Test("timeout kills and reaps a TERM-resistant discovery child before returning")
+  func resistantDiscoveryCleanup() async throws {
+    let (directory, shell, pids) = try discoveryFixture("trap '' TERM\necho $$ > \"$ALIGHT_TEST_PID_FILE\"\nexec /bin/sleep 30\n")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let start = ProcessInfo.processInfo.systemUptime
+    let path = await ClaudeCLIRenewal.loginShellLookup(environment: ["SHELL": shell.path,
+      "ALIGHT_TEST_PID_FILE": pids.path], timeout: 0.5)
+    #expect(path == nil)
+    #expect(ProcessInfo.processInfo.systemUptime - start < 2)
+    let pid = try #require(recordedPIDs(pids).first)
+    #expect(kill(pid, 0) == -1 && errno == ESRCH)
+  }
+
+  @Test("an exited shell's stdout-holding descendant is cleaned up before completion")
+  func descendantDiscoveryCleanup() async throws {
+    let (directory, shell, pids) = try discoveryFixture("trap '' TERM\n/bin/sleep 30 &\necho $$ $! > \"$ALIGHT_TEST_PID_FILE\"\nprintf '/nonsecret/claude\\n'\nexit 0\n")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let start = ProcessInfo.processInfo.systemUptime
+    let path = await ClaudeCLIRenewal.loginShellLookup(environment: ["SHELL": shell.path,
+      "ALIGHT_TEST_PID_FILE": pids.path], timeout: 1)
+    #expect(path == "/nonsecret/claude")
+    #expect(ProcessInfo.processInfo.systemUptime - start < 1)
+    let processes = try recordedPIDs(pids)
+    #expect(processes.count == 2)
+    for pid in processes { #expect(kill(pid, 0) == -1 && errno == ESRCH) }
+  }
+
+  @Test("oversized discovery output is capped and its writer is reaped without waiting for the deadline")
+  func oversizedDiscoveryCleanup() async throws {
+    let (directory, shell, pids) = try discoveryFixture("trap '' TERM\necho $$ > \"$ALIGHT_TEST_PID_FILE\"\nexec /usr/bin/yes x\n")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let start = ProcessInfo.processInfo.systemUptime
+    let path = await ClaudeCLIRenewal.loginShellLookup(environment: ["SHELL": shell.path,
+      "ALIGHT_TEST_PID_FILE": pids.path], timeout: 2)
+    #expect(path == nil)
+    #expect(ProcessInfo.processInfo.systemUptime - start < 1)
+    let pid = try #require(recordedPIDs(pids).first)
+    #expect(kill(pid, 0) == -1 && errno == ESRCH)
+    // Discovery uses a bounded pipe; no stdout file can grow or be unlinked
+    // while a signal-resistant writer continues producing bytes.
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted() == ["fake-shell", "pids"])
+  }
+
+  @Test("an escaped stdout holder cannot block discovery; fixture cleans its own session")
+  func escapedStdoutDiscovery() async throws {
+    let script = """
+      /usr/bin/python3 -c 'import os,time; os.setsid(); open(os.environ["ALIGHT_TEST_ESCAPE_FILE"],"w").write(str(os.getpid())); time.sleep(30)' &
+      echo $$ $! > "$ALIGHT_TEST_PID_FILE"
+      while [ ! -s "$ALIGHT_TEST_ESCAPE_FILE" ]; do /bin/sleep 0.01; done
+      printf '/nonsecret/claude\\n'
+      exit 0
+      """
+    let (directory, shell, pids) = try discoveryFixture(script)
+    let escapedFile = directory.appending(path: "escaped-pid")
+    var needsCleanup = true
+    // Only this fixture's recorded child is signaled. The product never
+    // inventories or kills a process outside its invocation's owned group.
+    defer {
+      if needsCleanup, let processes = try? recordedPIDs(pids), processes.count == 2 { _ = kill(processes[1], SIGKILL) }
+      try? FileManager.default.removeItem(at: directory)
+    }
+    let start = ProcessInfo.processInfo.systemUptime
+    let path = await ClaudeCLIRenewal.loginShellLookup(environment: ["SHELL": shell.path,
+      "ALIGHT_TEST_PID_FILE": pids.path, "ALIGHT_TEST_ESCAPE_FILE": escapedFile.path], timeout: 2)
+    #expect(path == nil) // Incomplete cleanup/output cannot become a successful lookup.
+    #expect(ProcessInfo.processInfo.systemUptime - start < 2)
+    let processes = try recordedPIDs(pids)
+    #expect(processes.count == 2)
+    let escaped = try #require(recordedPIDs(escapedFile).first)
+    #expect(escaped == processes[1])
+    #expect(kill(processes[0], 0) == -1 && errno == ESRCH)
+    #expect(kill(escaped, 0) == 0) // It did escape the product-owned process group.
+    #expect(kill(escaped, SIGKILL) == 0)
+    let cleanupDeadline = ProcessInfo.processInfo.systemUptime + 1
+    while kill(escaped, 0) == 0 && ProcessInfo.processInfo.systemUptime < cleanupDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let cleaned = kill(escaped, 0) == -1 && errno == ESRCH
+    #expect(cleaned)
+    needsCleanup = !cleaned
+    let nextShell = directory.appending(path: "next-shell")
+    try Data("#!/bin/sh\nprintf '/nonsecret/after-escape\\n'\n".utf8).write(to: nextShell)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: nextShell.path)
+    let next = await ClaudeCLIRenewal.loginShellLookup(environment: ["SHELL": nextShell.path], timeout: 1)
+    #expect(next == "/nonsecret/after-escape")
   }
 
   @Test("an expired refreshable login is a renewal in progress, not a sign-out")

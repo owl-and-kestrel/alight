@@ -78,14 +78,7 @@ struct ClaudeUsageClient: Sendable {
           return Self.failureResult(error, credential: renewed)
         }
       }
-      return .failure(
-        .claude,
-        source: "error",
-        error: "token rejected — renewing Claude Code login",
-        needsAuth: false,
-        retryAfterSeconds: ClaudeCLIRenewal.minimumAttemptInterval,
-        credentialExpiresAt: credential.expiresAt
-      )
+      return Self.rejectedCredentialResult(credential)
     } catch {
       return Self.failureResult(error, credential: credential)
     }
@@ -171,6 +164,13 @@ struct ClaudeUsageClient: Sendable {
   }
 
   // MARK: - Networking
+  /// A refresh token is not evidence that renewal succeeded. If the CLI could
+  /// not produce a changed, valid login after 401, expose the sign-in action.
+  static func rejectedCredentialResult(_ credential: ClaudeCredential) -> ProviderResult {
+    .failure(.claude, source: "error", error: "token rejected — sign in to Claude Code again",
+      needsAuth: true, retryAfterSeconds: ClaudeCLIRenewal.minimumAttemptInterval,
+      credentialExpiresAt: credential.expiresAt)
+  }
 
   private func fetchPayload(token: String) async throws -> [String: Any] {
     var request = URLRequest(url: usageURL)

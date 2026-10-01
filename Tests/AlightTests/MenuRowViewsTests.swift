@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import Alight
 
@@ -278,6 +279,121 @@ struct MenuRowViewsTests {
     #expect(controller.toolbarDefaultItemIdentifiers(controller.window!.toolbar!).count == 4)
   }
 
+  @Test("all gauge controls fit and the update checkbox notifies its updater")
+  @MainActor
+  func settingsControlsFitAndNotifyUpdater() throws {
+    let controller = SettingsWindowController()
+    let tabs = try #require(controller.window?.contentView as? NSTabView)
+    let gauge = try #require(tabs.tabViewItems.first { ($0.identifier as? String) == "gauge" }?.view as? NSScrollView)
+    let canvas = try #require(gauge.documentView)
+    #expect(canvas.subviews.compactMap { $0 as? SettingsSliderRow }.count == 12)
+    #expect(canvas.subviews.allSatisfy { $0.frame.minY >= 0 && $0.frame.maxY <= canvas.bounds.height })
+    let updates = try #require(tabs.tabViewItems.first { ($0.identifier as? String) == "updates" }?.view)
+    let checkbox = try #require(updates.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Install updates automatically" })
+    var selected: [Bool] = []
+    controller.onAutomaticUpdatesChanged = { selected.append($0) }
+    for state: NSControl.StateValue in [.on, .off] {
+      checkbox.state = state
+      #expect(NSApp.sendAction(try #require(checkbox.action), to: checkbox.target, from: checkbox))
+      #expect(controller.automaticallyInstallsUpdates == (state == .on))
+    }
+    #expect(selected == [true, false])
+    // Optional bounded offscreen QA: no status controller, poller, updater or
+    // real settings setter is created. The checkbox uses the fake callback.
+    if let output = ProcessInfo.processInfo.environment["ALIGHT_SAFE_UI_QA_DIR"] {
+      let directory = URL(fileURLWithPath: output, isDirectory: true)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      for (name, view) in [("gauge-controls", canvas), ("updates-controls", updates)] {
+        tabs.selectTabViewItem(withIdentifier: name == "gauge-controls" ? "gauge" : "updates")
+        view.appearance = NSAppearance(named: .aqua)
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.white.cgColor
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: directory.appending(path: "\(name).png"))
+      }
+    }
+  }
+
+  @Test("menu countdown and hover timers fire during event tracking")
+  @MainActor
+  func trackingTimersFire() {
+    for repeats in [false, true] {
+      let probe = MenuCallbackProbe()
+      let timer = MenuTrackingTimer.scheduled(timeInterval: 0.01, target: probe,
+        selector: #selector(MenuCallbackProbe.timerFired(_:)), userInfo: nil, repeats: repeats)
+      defer { timer.invalidate() }
+      let deadline = Date().addingTimeInterval(0.2)
+      while probe.calls == 0 && Date() < deadline {
+        RunLoop.main.run(mode: .eventTracking, before: deadline)
+      }
+      #expect(probe.calls > 0)
+    }
+  }
+
+  @Test("hidden command shortcuts remain dispatchable")
+  @MainActor
+  func hiddenKeyboardShortcut() throws {
+    _ = NSApplication.shared
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    let probe = MenuCallbackProbe()
+    let item = StatusItemController.keyboardShortcut(title: "Refresh", action: #selector(MenuCallbackProbe.menuInvoked(_:)), key: "r")
+    item.target = probe
+    menu.addItem(item)
+    let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
+      modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
+      characters: "r", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
+    #expect(item.isHidden)
+    #expect(menu.performKeyEquivalent(with: event))
+    #expect(probe.calls == 1)
+  }
+
+  @Test("Usage History is visible and dispatches its menu action")
+  @MainActor
+  func usageHistoryMenuDispatch() {
+    _ = NSApplication.shared
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    let probe = MenuCallbackProbe()
+    let item = StatusItemController.usageHistoryMenuItem(target: probe)
+    menu.addItem(item)
+    #expect(item.title == "Usage History…")
+    #expect(!item.isHidden && item.isEnabled)
+    menu.performActionForItem(at: 0)
+    #expect(probe.calls == 1)
+  }
+
+  @Test("history window reopens with the same host and canonical store")
+  @MainActor
+  func usageHistoryWindowReopens() throws {
+    _ = NSApplication.shared
+    let store = UsageStore(history: UsageHistory(persistenceURL: nil),
+      resultCache: UsageResultCache(persistenceURL: nil))
+    let controller = UsageInsightsWindowController(store: store, frameAutosaveName: nil)
+    let window = try #require(controller.window)
+    // Keep the synthetic test window offscreen, with no frame preference write
+    // or application activation. No StatusItemController/poller/updater exists.
+    window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+    defer { window.orderOut(nil); window.close() }
+    let host = try #require(window.contentViewController as? NSHostingController<UsageInsightsView>)
+    #expect(host.rootView.store === store)
+    #expect(!window.isReleasedWhenClosed)
+    controller.showWindow(nil)
+    #expect(window.isVisible)
+    window.close()
+    #expect(!window.isVisible)
+    store.status = UsageStatus(generatedAt: Date(), results: [])
+    controller.showWindow(nil)
+    #expect(window.isVisible)
+    #expect(controller.window === window)
+    #expect(window.contentViewController === host)
+    #expect(host.rootView.store === store)
+    #expect(store.history.observations.isEmpty)
+  }
+
   @Test("Secondary group buckets format clean 3P labels")
   func secondaryBucketLabels() {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -331,3 +447,10 @@ struct MenuRowViewsTests {
   }
 }
 
+@MainActor
+private final class MenuCallbackProbe: NSObject {
+  var calls = 0
+  @objc func timerFired(_ sender: Timer) { calls += 1 }
+  @objc func menuInvoked(_ sender: NSMenuItem) { calls += 1 }
+  @objc func openUsageHistory() { calls += 1 }
+}

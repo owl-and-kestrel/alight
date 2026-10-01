@@ -45,6 +45,50 @@ The native app:
 
 It never prints or stores credentials. Each provider is polled independently, so one being unavailable never blocks the others. Alight persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary. Cached pressure is recalculated against the current clock instead of freezing at capture time.
 
+### Usage insights source milestone
+
+`UsageStore.history` extends the existing single-flight refresh path: successful
+raw live results are recorded at request completion, before cache reconciliation.
+Cached, deferred, or failed refreshes never invent history. Derived observations
+live in `Application Support/Alight/usage-history.json`, capped at 14 days and
+20,000 points. This supplements the existing last-good cache without changing its
+document format. History load/save warnings appear in the insights view while
+live gauges continue working. No credentials, tokens, or raw account IDs enter
+history. Codex account partitions use a domain-separated SHA-256 reference from
+the same auth snapshot that supplied the request.
+
+`UsageInsightsView(store:)` and `UsageInsightsWindowController(store:)` are a
+reusable chart and thin window host. Open **Usage History…** from the Alight menu.
+The menu retains one window controller using the gauge's existing store, including
+after closing and reopening the window. Opening it creates no polling or provider
+runtime. Source tests cover menu dispatch and window reuse with synthetic data;
+installed-release acceptance remains separate.
+
+The view charts live observations over the past 24 hours and presents sustainable
+pace, recent rate, time to zero within the current quota window, and projected
+remaining allowance or quota overrun at reset and calendar week end. Overrun means
+extrapolated demand in percentage points, never billing overage or money. A week
+end beyond the current provider reset is unavailable, since the next allowance is
+unknown. Rate variation is labeled as observed variation, not a confidence interval.
+
+Forecasts require a verified account/source partition and at least three recent
+readings spanning ten minutes. Account/source/reset/duration/reported-limit changes,
+usage decreases and gaps over fifteen minutes break continuity. Thin, zero-rate,
+stale, reversed-clock and expired data yield an explicit reason and recovery text.
+Claude and Antigravity currently expose no verified account identity in their
+result contract: their observations are isolated points with forecasts unavailable.
+Codex without an account ID behaves the same way. An unreported plan/denominator
+change cannot be detected from percentages; projections explicitly retain that
+limitation rather than inventing a quota amount.
+
+Tests cover capture eligibility, provider/fast/slow separation, lineage, gaps,
+account opacity, persistence/restart/errors, retention, stale and thin coverage,
+zero/decreased usage, runway arithmetic and reset horizons. Offline verification
+uses `swift test --skip liveFetchIfCredentialsExist` to exclude the existing live
+Antigravity probe; use ordinary resource admission and cached dependencies when
+provider calls are out of scope. Mounting the real window and discoverable menu
+integration still require the separate UI custody and visual acceptance gates.
+
 ### Claude Code credential
 
 The reader is **read-only** and never writes to the Keychain (writing back a rotated token via the `security` CLI can reset the item's ACL and lock Claude Code out of its own credential — so we don't). The token is resolved in precedence order:

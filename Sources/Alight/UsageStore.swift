@@ -11,10 +11,11 @@ final class UsageStore {
   private let antigravity = AntigravityUsageClient()
 
   var status = UsageStatus()
+  var history: UsageHistory
 
   /// Last successful windows per provider. Only derived usage values are
   /// persisted; provider credentials never enter this cache.
-  @ObservationIgnored private var resultCache = UsageResultCache()
+  @ObservationIgnored private var resultCache: UsageResultCache
   /// Scheduled and manual refreshes share one task. `@MainActor` prevents data
   /// races, but without this single-flight gate two actor-isolated calls could
   /// still interleave while their network requests are suspended.
@@ -30,6 +31,11 @@ final class UsageStore {
   private static let claudeMaxBackoff: TimeInterval = 900
   private var claudeNextAllowed: Date = .distantPast
   private var claudeBackoff: TimeInterval = 0
+
+  init(history: UsageHistory = UsageHistory(), resultCache: UsageResultCache = UsageResultCache()) {
+    self.history = history
+    self.resultCache = resultCache
+  }
 
   @MainActor
   func refresh(force: Bool = false) async {
@@ -66,11 +72,12 @@ final class UsageStore {
     // don't send main-actor `self` across the concurrency boundary.
     let codex = self.codex
     let antigravity = self.antigravity
-    async let codexResult = codex.result(now: now)
-    async let antigravityResult = antigravity.result(now: now)
+    async let codexReading = Self.capture { await codex.result(now: now) }
+    async let antigravityReading = Self.capture { await antigravity.result(now: now) }
 
     // Poll Claude only when its gentle cadence/backoff allows.
     let claudeResult: ProviderResult
+    var claudeCapturedAt: Date?
     let cacheAgeBeforePoll = resultCache.cacheAge(for: .claude, now: now) ?? -1
     let nextAllowedBeforePoll = max(0, claudeNextAllowed.timeIntervalSince(now))
     let isClaudeDue = now >= claudeNextAllowed
@@ -79,6 +86,7 @@ final class UsageStore {
     )
     if force || isClaudeDue {
       let fresh = await claude.result(now: now)
+      claudeCapturedAt = Date()
       if fresh.ok {
         claudeBackoff = 0
         claudeNextAllowed = now.addingTimeInterval(Self.claudeBaseInterval)
@@ -102,7 +110,8 @@ final class UsageStore {
       claudeNextAllowed = Self.claudePollTime(
         scheduled: claudeNextAllowed,
         credentialExpiresAt: fresh.credentialExpiresAt,
-        now: now
+        now: now,
+        retryAfterSeconds: fresh.retryAfterSeconds
       )
       claudeResult = fresh
       Self.logClaudeLiveAttempt(fresh, now: now, nextAllowed: claudeNextAllowed)
@@ -120,13 +129,23 @@ final class UsageStore {
       )
     }
 
-    let reconciledCodex = resultCache.reconcile(await codexResult, now: now)
-    let reconciledClaude = resultCache.reconcile(claudeResult, now: now)
-    let reconciledAntigravity = resultCache.reconcile(await antigravityResult, now: now)
-    Self.logClaudeStatus(reconciledClaude, now: now)
+    let rawCodex = await codexReading
+    let rawAntigravity = await antigravityReading
+    // Record successful live values before the cache can turn a failure into
+    // an old reading. Timestamp each completion, not the start of the refresh.
+    var readings = [rawCodex, rawAntigravity]
+    if let claudeCapturedAt { readings.append((claudeResult, claudeCapturedAt)) }
+    for reading in readings.sorted(by: { $0.1 < $1.1 }) {
+      history.record(reading.0, capturedAt: reading.1)
+    }
+    let completedAt = Date()
+    let reconciledCodex = resultCache.reconcile(rawCodex.0, now: completedAt)
+    let reconciledClaude = resultCache.reconcile(claudeResult, now: completedAt)
+    let reconciledAntigravity = resultCache.reconcile(rawAntigravity.0, now: completedAt)
+    Self.logClaudeStatus(reconciledClaude, now: completedAt)
 
     status = UsageStatus(
-      generatedAt: now,
+      generatedAt: completedAt,
       results: [reconciledCodex, reconciledClaude, reconciledAntigravity]
     )
   }
@@ -134,7 +153,12 @@ final class UsageStore {
   /// Pull the next poll forward so it lands inside the CLI's pre-expiry
   /// renewal window. Without this, a five-minute cadence can straddle the
   /// four-minute window and only notice the token after it has expired.
-  static func claudePollTime(scheduled: Date, credentialExpiresAt: Date?, now: Date) -> Date {
+  static func claudePollTime(scheduled: Date, credentialExpiresAt: Date?, now: Date,
+    retryAfterSeconds: TimeInterval? = nil) -> Date {
+    // Server cooldown is a lower bound, even when credential expiry is sooner.
+    if let retryAfterSeconds {
+      return max(scheduled, now.addingTimeInterval(max(5, retryAfterSeconds)))
+    }
     guard let credentialExpiresAt else {
       return scheduled
     }
@@ -143,6 +167,11 @@ final class UsageStore {
       return scheduled
     }
     return min(scheduled, renewal)
+  }
+
+  private static func capture(_ operation: @Sendable () async -> ProviderResult) async -> (ProviderResult, Date) {
+    let result = await operation()
+    return (result, Date())
   }
 
   private static func logClaudeLiveAttempt(_ result: ProviderResult, now: Date, nextAllowed: Date) {

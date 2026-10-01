@@ -207,6 +207,10 @@ struct ProviderResult: Sendable {
   /// scheduler poll (and renew) just before expiry instead of discovering an
   /// expired token on the next gentle poll.
   var credentialExpiresAt: Date? = nil
+  /// Derived provenance from the same auth snapshot used for this request.
+  /// Nil means account continuity is unverified: display isolated observations,
+  /// but never join them into a consumption rate. This grants no authority.
+  var observationIdentity: UsageObservationIdentity? = nil
 
   var cacheAgeDisplay: String? {
     cacheAgeSeconds.map(Self.compactDuration)
