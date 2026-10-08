@@ -258,6 +258,11 @@ final class ProviderHeaderRowView: NSView {
     statusLabel.textColor = statusColor
     statusLabel.alignment = .right
     statusLabel.frame = NSRect(x: 142, y: 5, width: 100, height: 16)
+    // Cached hands hide the latest attempt's reason (for example, that Claude
+    // polling stopped); hovering the status shows it.
+    if result?.source == "cached" {
+      statusLabel.toolTip = result?.error
+    }
     addSubview(statusLabel)
 
     // Clickable reorder buttons (▲ / ▼)
@@ -547,15 +552,27 @@ final class ProviderNoteRowView: NSView {
 final class ProviderStatusRowView: NSView {
   override var isFlipped: Bool { true }
 
+  /// A reason wraps onto a second line, so its actionable end (such as "then
+  /// Refresh") stays visible; anything longer is truncated and the full text
+  /// is the tooltip.
   init(reason: String) {
-    super.init(frame: NSRect(x: 0, y: 0, width: 286, height: 22))
-
-    let label = NSTextField(labelWithString: reason)
+    let label = NSTextField(wrappingLabelWithString: reason)
     label.font = .systemFont(ofSize: 11, weight: .regular)
     label.textColor = .secondaryLabelColor
-    label.frame = NSRect(x: 18, y: 3, width: 254, height: 16)
+    label.maximumNumberOfLines = 2
+    label.cell?.truncatesLastVisibleLine = true
+    label.preferredMaxLayoutWidth = Self.textWidth
+    let lineHeight: CGFloat = 16
+    let fitted = label.sizeThatFits(NSSize(width: Self.textWidth, height: .greatestFiniteMagnitude)).height
+    let textHeight = fitted > lineHeight + 1 ? 2 * lineHeight - 2 : lineHeight
+    super.init(frame: NSRect(x: 0, y: 0, width: 286, height: textHeight + 6))
+
+    label.frame = NSRect(x: 18, y: 3, width: Self.textWidth, height: textHeight)
     addSubview(label)
+    toolTip = reason
   }
+
+  private static let textWidth: CGFloat = 254
 
   required init?(coder: NSCoder) {
     nil

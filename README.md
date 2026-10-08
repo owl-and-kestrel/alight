@@ -43,7 +43,7 @@ The native app:
 - runs Claude Code's own headless `/usage` command (`claude -p /usage --output-format json`), mapping its current session onto the fast hand, its all-models week (when the plan has one) onto the slow hand, and its Fable week onto the outer-edge star;
 - reads local Antigravity credentials and queries the native Antigravity backend (`daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`), mapping the Gemini 5-hour and weekly limits to fast/slow purple hands and secondary model groups to dropdown menu rows.
 
-It never prints or stores credentials. Each provider is polled independently, so one being unavailable never blocks the others. Alight persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary. Cached pressure is recalculated against the current clock instead of freezing at capture time.
+It never prints or stores credentials. Each provider is polled independently, so one being unavailable never blocks the others. Alight persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary, and no cached reading older than six hours is shown. Cached pressure is recalculated against the current clock instead of freezing at capture time.
 
 ### Usage insights source milestone
 
@@ -96,16 +96,17 @@ Alight asks Claude Code itself. Each Claude poll runs, directly and without a sh
 
 ```sh
 claude auth status --json          # which account, and is it signed in?
-claude -p /usage --output-format json --no-session-persistence
+claude -p /usage --output-format json --no-session-persistence --safe-mode
 ```
 
-`/usage` is a local command: Claude Code answers it without a model turn (no inference, no cost, about a second) and handles its own login and token renewal. Alight reads no Claude credentials, never touches the `Claude Code-credentials` Keychain item, and makes no Anthropic request of its own. If Claude Code ever answers `/usage` with a model turn, Alight refuses the reading and stops scheduled Claude polls until you press Refresh.
+`/usage` is a local command: Claude Code answers it without a model turn (no inference, no cost) and handles its own login and token renewal. Alight reads no Claude credentials, never touches the `Claude Code-credentials` Keychain item, and makes no Anthropic request of its own. If Claude Code ever answers `/usage` with a model turn, Alight refuses the reading and stops scheduled Claude polls until you press Refresh. `--safe-mode` keeps each poll from loading your hooks, plugins, and MCP servers.
 
-- **CLI location:** `ALIGHT_CLAUDE_BIN`, else the first of `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, `~/.claude/local/claude`.
-- **Isolation:** stdin is `/dev/null`, the working directory is `~/Library/Application Support/Alight`, the environment is only `HOME`, `USER`, `PATH`, `LANG=en_US.UTF-8` and `DISABLE_AUTOUPDATER=1`, output is bounded, and a 30-second deadline stops the CLI's whole process group.
-- **Plans:** a Team seat reports only a session limit plus model-scoped weeks (such as Fable); that is a complete reading. Pro/Max plans also report `Current week (all models)`.
-- **Polling:** at most every three minutes, backing off to fifteen after failures; Manual Refresh polls immediately. Only one `claude` process runs at a time.
-- **Failures** are shown as such (for example `Claude Code /usage timed out` or `unrecognized Claude Code usage line: …`) and never as guessed numbers. When Claude Code is signed out, the menu offers **Sign in to Claude…** (`claude auth login`).
+- **Cost:** measured on Claude Code 2.1.286, `/usage` takes 2-4 s and about 1.8 CPU-seconds (it also summarizes local sessions), `auth status` about 0.2 s; at the three-minute cadence, roughly 15 CPU-minutes a day.
+- **CLI location:** `ALIGHT_CLAUDE_CLI`, else the first of `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, `~/.claude/local/claude`, `~/.volta/bin/claude`, `~/.bun/bin/claude`, and the newest `~/.nvm/versions/node/*/bin/claude`.
+- **Isolation:** stdin is `/dev/null`, the working directory is `~/Library/Application Support/Alight`, the environment is only `HOME`, `USER`, `PATH`, `TMPDIR`, `LANG=en_US.UTF-8` and `DISABLE_AUTOUPDATER=1`, signals start unblocked, output is bounded, and a 30-second deadline sends SIGTERM, then SIGKILL, to the CLI's whole process group. Alight writes nothing under `~/.claude`; Claude Code may update its own state (`~/.claude.json`, its token).
+- **Plans:** a Team seat reports only a session limit plus model-scoped weeks (such as Fable); that is a complete reading. Pro/Max plans also report `Current week (all models)`, and Max/Team plans `Current week (Sonnet only)`, shown as a dropdown row that counts toward the summary's most constrained window.
+- **Polling:** at most every three minutes, backing off to fifteen after failures; a signed-out CLI is rechecked every minute, so usage appears within a minute of signing in. Manual Refresh polls immediately. Only one `claude` process runs at a time.
+- **Failures** are shown as such (for example `Claude Code /usage timed out` or `unrecognized Claude Code usage line: …`) and never as guessed numbers; between polls the menu keeps the reason and the time of the next attempt. When Claude Code is signed out, the menu offers **Sign in to Claude…** (`claude auth login`).
 - **Cache:** a Claude reading is reused only for the same account (a domain-separated SHA-256 of its email and organization plus the plan name; the raw email is never stored). A different, unknown, or signed-out account drops it, and no cached reading older than six hours is shown.
 
 Claude Desktop's always-populated plan display is not a supported alternate source. Alight deliberately does not borrow Desktop cookies or private app state.
@@ -119,7 +120,7 @@ Antigravity credentials resolve in precedence order:
 3. **Antigravity CLI token files** — `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.gemini/jetski-standalone-oauth-token`, or `~/.gemini/oauth_creds.json`.
 4. **Keychain** (macOS) — `gemini` generic password item containing a base64-encoded `go-keyring-base64` JSON token.
 
-When an access token expires, if a refresh token is present, Alight renews it in-memory against `https://oauth2.googleapis.com/token` without modifying local files or the Keychain. The quota summary URL can be overridden with `ALIGHT_ANTIGRAVITY_USAGE_URL`. The default matches the native `agy` client; the unprefixed Code Assist host can report a different Gemini allowance for the same account. Antigravity cache entries carry a non-secret endpoint fingerprint. Version 0.6.0 discards older unbound or different-source Antigravity readings while preserving Codex and Claude cache data.
+When an access token expires, if a refresh token is present, Alight renews it in-memory against `https://oauth2.googleapis.com/token` without modifying local files or the Keychain. The quota summary URL can be overridden with `ALIGHT_ANTIGRAVITY_USAGE_URL`. The default matches the native `agy` client; the unprefixed Code Assist host can report a different Gemini allowance for the same account. Antigravity cache entries carry a non-secret endpoint fingerprint. Older unbound or different-source Antigravity readings are discarded on load, as are Claude readings from before account binding; Codex cache data is preserved.
 
 ### Release updates
 

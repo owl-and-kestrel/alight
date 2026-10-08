@@ -196,8 +196,9 @@ enum MeterIconRenderer {
         : .zero
       let tracksRect = NSRect(x: tracksStartX, y: contentY, width: tracksWidth, height: contentHeight)
 
-      // Tracks stack top-down (weekly, ~5h, scoped) and are centred vertically
-      // in the card, so every provider sits on the same-sized card.
+      // Tracks stack top-down in `meterGroups` order (weekly, scoped weekly,
+      // ~5h) and are centred vertically in the card, so every provider sits on
+      // the same-sized card.
       let windows = Array(group.windows.prefix(maximumBarsPerRow))
       func barHeight(_ window: UsageWindow) -> CGFloat {
         // A lone track fills its card, like the mockup's Codex row.

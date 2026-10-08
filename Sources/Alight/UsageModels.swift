@@ -201,8 +201,6 @@ struct ProviderResult: Sendable {
   var needsAuth: Bool = false
   /// Age of the live reading being reused for a cached result, when known.
   var cacheAgeSeconds: TimeInterval? = nil
-  /// Server-provided retry delay for transient failures such as HTTP 429.
-  var retryAfterSeconds: TimeInterval? = nil
   /// Derived provenance from the same auth snapshot used for this request.
   /// Nil means account continuity is unverified: display isolated observations,
   /// but never join them into a consumption rate. A failure may carry it too,
@@ -231,7 +229,6 @@ struct ProviderResult: Sendable {
     error: String,
     needsAuth: Bool = false,
     cacheAgeSeconds: TimeInterval? = nil,
-    retryAfterSeconds: TimeInterval? = nil,
     observationIdentity: UsageObservationIdentity? = nil
   ) -> ProviderResult {
     ProviderResult(
@@ -242,7 +239,6 @@ struct ProviderResult: Sendable {
       windows: [],
       needsAuth: needsAuth,
       cacheAgeSeconds: cacheAgeSeconds,
-      retryAfterSeconds: retryAfterSeconds,
       observationIdentity: observationIdentity
     )
   }

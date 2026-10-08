@@ -133,6 +133,21 @@ struct MenuRowViewsTests {
     #expect(status.frame.width == 286)
     #expect(status.frame.height == 22)
     #expect(status.isFlipped == true)
+    #expect(status.toolTip == "Usage unavailable")
+  }
+
+  @Test("a long status reason wraps to a second line instead of clipping its end")
+  @MainActor
+  func longStatusReason() {
+    let reason = "Stopped: /usage ran a model turn. Update Claude Code, then Refresh"
+    let status = ProviderStatusRowView(reason: reason)
+    #expect(status.frame.width == 286)
+    #expect(status.frame.height > 22)
+    #expect(status.frame.height <= 40)
+    #expect(status.toolTip == reason)
+    let label = status.subviews.compactMap { $0 as? NSTextField }.first
+    #expect(label?.maximumNumberOfLines == 2)
+    #expect((label?.frame.maxY ?? .infinity) <= status.frame.height)
   }
 
   @Test("ColorSwatchButton tracks hover, draws swatch, and initializes correctly")

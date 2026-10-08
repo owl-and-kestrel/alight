@@ -105,21 +105,19 @@ struct AntigravityUsageClient: Sendable {
         windows: windows
       )
     } catch {
+      // A rate limit's Retry-After is part of the error text; Antigravity
+      // polls every minute regardless.
       let needsAuth: Bool
-      let retryAfter: TimeInterval?
-      if case AntigravityError.fetchFailed(let code, let wait) = error {
+      if case AntigravityError.fetchFailed(let code, _) = error {
         needsAuth = code == 401
-        retryAfter = wait
       } else {
         needsAuth = false
-        retryAfter = nil
       }
       return .failure(
         .antigravity,
         source: "error",
         error: AntigravityUsageClient.describe(error),
-        needsAuth: needsAuth,
-        retryAfterSeconds: retryAfter
+        needsAuth: needsAuth
       )
     }
   }

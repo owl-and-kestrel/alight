@@ -7,6 +7,10 @@ import Darwin
 /// - The child gets its own process group, stdin on `/dev/null`, an explicit
 ///   environment and working directory, and no inherited descriptors
 ///   (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
+/// - The child starts with no blocked signals and every signal at its default
+///   action. Runs are spawned from a dispatch worker thread, which blocks most
+///   signals; without the reset, the child would inherit that mask and ignore
+///   SIGTERM (and logout, `kill`, or Activity Monitor's Quit).
 /// - stdout and stderr are bounded pipes. A child that writes more than
 ///   `outputLimit` bytes to either stream is stopped instead of buffered.
 /// - A deadline or an overflow sends SIGTERM to the group, then SIGKILL after
@@ -30,6 +34,9 @@ final class BoundedProcessRunner: @unchecked Sendable {
     /// an output pipe open, so the captured output may be incomplete.
     case outputIncomplete
     case signaled
+    /// The child's exit status could not be collected: something else reaped
+    /// it (for example, SIGCHLD set to SIG_IGN). Its output is not trusted.
+    case statusUnavailable
   }
 
   struct Result: Sendable {
@@ -106,8 +113,17 @@ final class BoundedProcessRunner: @unchecked Sendable {
     defer { posix_spawn_file_actions_destroy(&actions) }
     guard posix_spawnattr_init(&attributes) == 0 else { return .failed(.launchFailed) }
     defer { posix_spawnattr_destroy(&attributes) }
-    guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)) == 0,
+    var noSignals = sigset_t()
+    sigemptyset(&noSignals)
+    var defaultSignals = sigset_t()
+    sigfillset(&defaultSignals)
+    sigdelset(&defaultSignals, SIGKILL)
+    sigdelset(&defaultSignals, SIGSTOP)
+    let flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+    guard posix_spawnattr_setflags(&attributes, Int16(flags)) == 0,
       posix_spawnattr_setpgroup(&attributes, 0) == 0,
+      posix_spawnattr_setsigmask(&attributes, &noSignals) == 0,
+      posix_spawnattr_setsigdefault(&attributes, &defaultSignals) == 0,
       posix_spawn_file_actions_adddup2(&actions, null, STDIN_FILENO) == 0,
       posix_spawn_file_actions_adddup2(&actions, pipes[0][1], STDOUT_FILENO) == 0,
       posix_spawn_file_actions_adddup2(&actions, pipes[1][1], STDERR_FILENO) == 0,
@@ -147,6 +163,19 @@ final class BoundedProcessRunner: @unchecked Sendable {
       _ = kill(-pid, SIGTERM)
     }
 
+    /// Sleeps until an open stream is readable or `pollInterval` passes. The
+    /// interval bounds how late a deadline or the child's exit is noticed
+    /// while it is silent, without spinning.
+    func waitForOutput() {
+      var descriptors = pipes.indices.filter { !closed[$0] }
+        .map { pollfd(fd: pipes[$0][0], events: Int16(POLLIN), revents: 0) }
+      if descriptors.isEmpty {
+        usleep(useconds_t(Self.pollInterval * 1000))
+      } else {
+        _ = poll(&descriptors, nfds_t(descriptors.count), Self.pollInterval)
+      }
+    }
+
     while true {
       let now = ProcessInfo.processInfo.systemUptime
       for index in pipes.indices where !closed[index] {
@@ -181,7 +210,14 @@ final class BoundedProcessRunner: @unchecked Sendable {
       // WNOWAIT keeps the child PID reserved until its group has been
       // signaled, so a recycled process-group id can never be hit.
       var info = siginfo_t()
-      if waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == pid {
+      let waited = waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT)
+      if waited == -1 && errno == ECHILD {
+        // Reaped elsewhere: the PID (and so the group id) may already belong
+        // to another process, so never signal it again. Without this the
+        // loop would spin forever and wedge every later run on this queue.
+        return .failed(failure ?? .statusUnavailable)
+      }
+      if waited == 0 && info.si_pid == pid {
         _ = kill(-pid, SIGKILL) // Clean up any helpers left in the group.
         if exitedAt == nil { exitedAt = now }
         if closed.contains(false) {
@@ -189,7 +225,7 @@ final class BoundedProcessRunner: @unchecked Sendable {
           // left the group (new session) may still hold a pipe; close it and
           // fail rather than wait or signal a process Alight does not own.
           if now - exitedAt! < 0.1 {
-            usleep(5_000)
+            waitForOutput()
             continue
           }
           if stoppingAt == nil { failure = .outputIncomplete; stoppingAt = now }
@@ -202,7 +238,7 @@ final class BoundedProcessRunner: @unchecked Sendable {
         var status: Int32 = 0
         var reaped: pid_t
         repeat { reaped = waitpid(pid, &status, 0) } while reaped < 0 && errno == EINTR
-        guard reaped == pid else { return .failed(failure ?? .launchFailed) }
+        guard reaped == pid else { return .failed(failure ?? .statusUnavailable) }
         let signal = status & 0x7f
         if failure == nil && signal != 0 { failure = .signaled }
         return Result(
@@ -212,7 +248,10 @@ final class BoundedProcessRunner: @unchecked Sendable {
           failure: failure
         )
       }
-      usleep(5_000)
+      waitForOutput()
     }
   }
+
+  /// Milliseconds a silent run sleeps between checks of its deadline and exit.
+  private static let pollInterval: Int32 = 25
 }

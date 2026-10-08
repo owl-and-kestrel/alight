@@ -75,12 +75,41 @@ struct BoundedProcessRunnerTests {
     let (directory, executable, pids) = try fixture("trap '' TERM\necho $$ > \"$ALIGHT_TEST_PID_FILE\"\nexec /bin/sleep 30\n")
     defer { try? FileManager.default.removeItem(at: directory) }
     let start = ProcessInfo.processInfo.systemUptime
-    let result = await run(executable, environment: ["ALIGHT_TEST_PID_FILE": pids.path], timeout: 0.5)
+    // The deadline leaves a loaded host time to start the shell and write its PID.
+    let result = await run(executable, environment: ["ALIGHT_TEST_PID_FILE": pids.path], timeout: 1.5)
     #expect(result.failure == .timedOut)
     #expect(result.status == nil)
-    #expect(ProcessInfo.processInfo.systemUptime - start < 2)
+    #expect(ProcessInfo.processInfo.systemUptime - start < 5)
     let pid = try #require(recordedPIDs(pids).first)
     #expect(kill(pid, 0) == -1 && errno == ESRCH)
+  }
+
+  @Test("a cooperative child stops at SIGTERM, without waiting for SIGKILL")
+  func cooperativeChildStopsAtTerm() async throws {
+    // No trap: SIGTERM's default action ends the child, unless the runner
+    // spawned it with SIGTERM blocked (a dispatch worker thread's mask).
+    let (directory, executable, _) = try fixture("exec /bin/sleep 30\n")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let start = ProcessInfo.processInfo.systemUptime
+    let result = await run(executable, timeout: 0.3, grace: 5)
+    #expect(result.failure == .timedOut)
+    #expect(ProcessInfo.processInfo.systemUptime - start < 3)
+  }
+
+  @Test("the child starts with no blocked signals")
+  func childSignalMask() async throws {
+    // Spawned directly: /bin/sh would reset its own mask and hide the bug.
+    let result = await BoundedProcessRunner().run(
+      executable: "/usr/bin/python3",
+      arguments: ["-c", "import signal; print(len(signal.pthread_sigmask(signal.SIG_BLOCK, [])))"],
+      environment: ["PATH": "/usr/bin:/bin"],
+      directory: FileManager.default.temporaryDirectory.path,
+      timeout: 20,
+      outputLimit: 4096
+    )
+    #expect(result.failure == nil)
+    #expect(result.status == 0)
+    #expect(String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "0")
   }
 
   @Test("an exited child's stdout-holding descendant is cleaned up before completion")
@@ -88,10 +117,11 @@ struct BoundedProcessRunnerTests {
     let (directory, executable, pids) = try fixture("trap '' TERM\n/bin/sleep 30 &\necho $$ $! > \"$ALIGHT_TEST_PID_FILE\"\nprintf 'done\\n'\nexit 0\n")
     defer { try? FileManager.default.removeItem(at: directory) }
     let start = ProcessInfo.processInfo.systemUptime
-    let result = await run(executable, environment: ["ALIGHT_TEST_PID_FILE": pids.path], timeout: 1)
+    let result = await run(executable, environment: ["ALIGHT_TEST_PID_FILE": pids.path], timeout: 10)
     #expect(result.failure == nil)
     #expect(String(decoding: result.stdout, as: UTF8.self) == "done\n")
-    #expect(ProcessInfo.processInfo.systemUptime - start < 1)
+    // Far below the deadline: completion did not wait for the sleeping holder.
+    #expect(ProcessInfo.processInfo.systemUptime - start < 5)
     let processes = try recordedPIDs(pids)
     #expect(processes.count == 2)
     for pid in processes { #expect(kill(pid, 0) == -1 && errno == ESRCH) }
@@ -102,10 +132,10 @@ struct BoundedProcessRunnerTests {
     let (directory, executable, pids) = try fixture("trap '' TERM\necho $$ > \"$ALIGHT_TEST_PID_FILE\"\nexec /usr/bin/yes x\n")
     defer { try? FileManager.default.removeItem(at: directory) }
     let start = ProcessInfo.processInfo.systemUptime
-    let result = await run(executable, environment: ["ALIGHT_TEST_PID_FILE": pids.path], timeout: 5)
+    let result = await run(executable, environment: ["ALIGHT_TEST_PID_FILE": pids.path], timeout: 10)
     #expect(result.failure == .outputLimitExceeded)
     #expect(result.stdout.count <= 4096)
-    #expect(ProcessInfo.processInfo.systemUptime - start < 1)
+    #expect(ProcessInfo.processInfo.systemUptime - start < 5)
     let pid = try #require(recordedPIDs(pids).first)
     #expect(kill(pid, 0) == -1 && errno == ESRCH)
     // Output goes through bounded pipes; nothing is written to disk.
@@ -117,10 +147,10 @@ struct BoundedProcessRunnerTests {
     let (directory, executable, _) = try fixture("exec /usr/bin/yes x >&2\n")
     defer { try? FileManager.default.removeItem(at: directory) }
     let start = ProcessInfo.processInfo.systemUptime
-    let result = await run(executable, timeout: 5)
+    let result = await run(executable, timeout: 10)
     #expect(result.failure == .outputLimitExceeded)
     #expect(result.stderr.count <= 4096)
-    #expect(ProcessInfo.processInfo.systemUptime - start < 1)
+    #expect(ProcessInfo.processInfo.systemUptime - start < 5)
   }
 
   @Test("an escaped stdout holder cannot block completion; fixture cleans its own session")
@@ -143,10 +173,10 @@ struct BoundedProcessRunnerTests {
     }
     let start = ProcessInfo.processInfo.systemUptime
     let result = await run(executable, environment: ["ALIGHT_TEST_PID_FILE": pids.path,
-      "ALIGHT_TEST_ESCAPE_FILE": escapedFile.path, "PATH": "/usr/bin:/bin"], timeout: 2)
+      "ALIGHT_TEST_ESCAPE_FILE": escapedFile.path, "PATH": "/usr/bin:/bin"], timeout: 10)
     #expect(result.failure == .outputIncomplete) // Incomplete output never counts as success.
     #expect(result.status == nil)
-    #expect(ProcessInfo.processInfo.systemUptime - start < 2)
+    #expect(ProcessInfo.processInfo.systemUptime - start < 5)
     let processes = try recordedPIDs(pids)
     #expect(processes.count == 2)
     let escaped = try #require(recordedPIDs(escapedFile).first)

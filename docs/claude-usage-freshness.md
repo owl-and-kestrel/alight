@@ -12,10 +12,13 @@ Last revised: 2026-10-08 (Claude usage now comes from Claude Code's own
    prompt. Otherwise its email and organization become a domain-separated
    SHA-256 account identity, with the plan name (`team`, `max`, …) as the
    limit identity. The raw email never leaves the client.
-2. `claude -p /usage --output-format json --no-session-persistence`. `/usage`
-   is a local command: Claude Code answers without a model turn (`num_turns`
-   0, `total_cost_usd` 0, about a second) and handles its own login, token
-   renewal, and endpoint.
+2. `claude -p /usage --output-format json --no-session-persistence
+   --safe-mode`. `/usage` is a local command: Claude Code answers without a
+   model turn (`num_turns` 0, `total_cost_usd` 0) and handles its own login,
+   token renewal, and endpoint. Measured on 2.1.286 (Team seat): 2-4 s wall,
+   about 1.8 CPU-seconds and 330 MB peak, because it also summarizes local
+   sessions; `auth status` is about 0.2 s. At the three-minute cadence that is
+   about 480 polls and 15 CPU-minutes a day.
 
 `UsageStore` reconciles the result with the last-good cache before
 `StatusItemController` renders the provider section and tooltip. It emits
@@ -28,29 +31,51 @@ and `Sources/Alight/UsageStore.swift`.
 
 ### Process contract
 
-- CLI: `ALIGHT_CLAUDE_BIN`, else the first executable of `~/.local/bin/claude`,
-  `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`,
-  `~/.claude/local/claude`. A login item does not inherit the shell `PATH`, so
-  there is no PATH search.
+- CLI: `ALIGHT_CLAUDE_CLI` (absolute path), else the first executable of
+  `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`,
+  `~/.claude/local/claude`, `~/.volta/bin/claude`, `~/.bun/bin/claude`, and the
+  newest `~/.nvm/versions/node/*/bin/claude`. A login item does not inherit the
+  shell `PATH`, so there is no PATH search and no shell lookup.
 - Environment: only `HOME`, `USER`, `PATH=/usr/bin:/bin:<CLI folder>` (an npm
-  install finds `node` there), `LANG=en_US.UTF-8` (reset dates in English), and
-  `DISABLE_AUTOUPDATER=1` (a poll never updates Claude Code). Alight's own
-  environment, including any `CLAUDE_CODE_*` or `ANTHROPIC_*` variable, is not
-  forwarded, so the CLI always uses its normal login.
+  install finds `node` there), the per-user `TMPDIR`, `LANG=en_US.UTF-8` (reset
+  dates in English), and `DISABLE_AUTOUPDATER=1` (a poll never updates Claude
+  Code). Alight's own environment, including any `CLAUDE_CODE_*` or
+  `ANTHROPIC_*` variable, is not forwarded, so the CLI always uses its normal
+  login.
 - stdin `/dev/null`; working directory `~/Library/Application Support/Alight`
   (no project settings or instructions are picked up); stdout and stderr each
   capped at 256 KiB; 30-second deadline, then SIGTERM and, one second later,
   SIGKILL to the CLI's whole process group. The child is reaped before the
   call returns. Runs are serialized, so two `claude` processes never overlap.
+- Signals: runs are spawned from a dispatch worker thread, which blocks most
+  signals. The child gets an empty signal mask and default signal actions
+  (`POSIX_SPAWN_SETSIGMASK` / `POSIX_SPAWN_SETSIGDEF`); without them it ran
+  with SIGTERM, SIGCHLD, SIGINT and SIGHUP blocked, ignored the deadline's
+  SIGTERM, and a CLI left behind by a quitting Alight could only be stopped
+  with SIGKILL. If the child is reaped elsewhere (`ECHILD`), the run fails
+  without signaling the possibly reused process group.
 - `--no-session-persistence` matters: without it each poll saves a ~4 KB
   resumable session under `~/.claude/projects/`, about 480 a day.
+  `--safe-mode` keeps each poll from loading the user's hooks, plugins, and
+  MCP servers; without it every poll fires SessionStart and SessionEnd hooks.
+  With both flags no project directory is created for the working directory.
+- Alight writes nothing under `~/.claude` or to the Keychain. Claude Code
+  itself may update `~/.claude.json` and renew its own token, as intended.
 
 ### Output contract
 
 The JSON must be `type: "result"`, `num_turns: 0` with zero cost, `subtype:
-"success"`, and `local_command: "usage"`. A model turn is refused (source
-`refused`) and scheduled Claude polls stop until a manual Refresh, so a CLI
-that ever treats `/usage` as a prompt cannot spend inference every poll.
+"success"`, and `local_command: "usage"`. A model turn, or a result without
+`num_turns` (which cannot rule one out), is refused (source `refused`) and
+scheduled Claude polls stop until a manual Refresh, so a CLI that ever treats
+`/usage` as a prompt cannot spend inference every poll.
+
+Claude Code 2.1.286 builds each limit line as `<title>: <floor(utilization)>%
+used`, plus ` · resets <date>` when the limit has a reset time, and prints the
+date with its own formatter forced to show the date, the hour (minutes only
+when non-zero), and the zone; it adds the year only when the reset is not in
+the current year. Utilization is floored to whole percents, so readings are up
+to a point less precise than the old endpoint's.
 
 Sample `result` text from a Team seat (Claude Code 2.1.286):
 
@@ -68,18 +93,31 @@ What's contributing to your limits usage?
 - `Current week (all models)` (Pro/Max) → slow weekly window.
 - `Current week (<Model>)` → scoped weekly window. Fable keeps the
   outer-edge star (`UsageScope.fable`); any other model is a dropdown-only row.
-  A trailing ` only` (`Sonnet only`) is dropped from the name.
+  A trailing ` only` (`Sonnet only`, Max and Team plans) is dropped from the
+  name. Scoped rows count toward `UsageStatus.worst`, so the summary can name
+  `Claude Sonnet`. The label ends at the colon before the percentage, so a
+  model name containing a colon stays whole.
 - Percent: `N% used`, or `N% left` / `N% remaining` converted to used.
 - Reset: the IANA zone in parentheses (else the system zone, which the CLI
-  also uses); `Oct 8 at 2pm`, `Oct 8, 2:30pm`, `Oct 8 at 14:00`, `2pm` (next
-  occurrence), `Oct 8` (midnight), or `in 3h 12m`. A date with no year takes
-  the year closest to now, so a December poll reads `Jan 2` as next year. A
-  reset more than a day outside the window's own length is a misread.
+  also uses). JavaScriptCore builds print `Oct 8 at 2pm` and, for another
+  year, `Jan 2, 2027 at 9am`; V8 prints `Oct 8, 2:30pm` and `Jan 2, 2027,
+  9am`. 24-hour `Oct 8 at 14:00` is accepted. A date without a year is in the
+  current year; Alight takes the closest year, which also covers a poll that
+  straddles midnight on Dec 31. Time only (`2pm`, the formatter's form for a
+  reset within a day when the date is not forced) is the next occurrence. A
+  date without a time or a relative phrase is rejected: Claude Code never
+  prints one for `/usage`, and a date read as midnight could be a day wrong.
+  During a fall-back hour an ambiguous wall time reads as its first
+  occurrence (at most an hour early, once a year).
+- A reset more than a day outside the window's own length is a misread. A
+  reset at or before the reading's time means the window already reset: it is
+  shown as a fresh, unused window, not its stale percentage.
 - An unused window with no reset clause is treated as a fresh window; a used
   one without a reset fails.
 - Lines not starting with `Current session` / `Current week` (the usage
-  breakdown) are ignored. A recognized line that cannot be read fails the whole
-  reading, because dropping it could make a weekly plan look session-only.
+  breakdown, spend limits) are ignored. A limit line that cannot be classified
+  or read fails the whole reading, because dropping it could hide an active
+  limit or make a weekly plan look session-only.
 
 A reading needs at least one broad window. A Team seat has only `Current
 session` plus model-scoped weeks; the command prints every limit the plan has,
@@ -90,15 +128,25 @@ rather than zero usage.
 
 Failures (CLI missing, timeout, oversized output, non-JSON, non-zero exit,
 unrecognized text) become explicit messages, such as `Claude Code /usage timed
-out` or `Claude Code exited with status 1: error: unknown option …`. They
-never become numbers.
+out`, `Claude Code exited with status 1: …`, or `update Claude Code (error:
+unknown option '--safe-mode')` for a CLI older than a flag Alight passes.
+They never become numbers. A long reason wraps to two lines in the menu, and
+its full text is the tooltip.
 
 ## Canonical Policy
 
 - Scheduled Claude polls run at most every three minutes. After a failure the
-  wait is three minutes, doubling up to fifteen; success resets it. Manual
-  Refresh polls immediately. Scheduled and manual refreshes share one in-flight
-  task.
+  wait is three minutes, doubling up to fifteen; success resets it. A
+  signed-out CLI (`auth status` `loggedIn: false`) is rechecked every minute
+  without backoff: only that local check runs, and usage is read in the same
+  poll once the user signs in. Manual Refresh polls immediately. Scheduled and
+  manual refreshes share one in-flight task. `ClaudePollSchedule` in
+  `UsageStore.swift` owns this policy.
+- Between polls, deferred cycles carry the latest attempt's account, sign-in
+  state, and reason (`not signed in to Claude Code · retry in 45s`), so the
+  menu keeps **Sign in to Claude…** and actionable errors visible. A refusal
+  keeps its `Update Claude Code, then Refresh` reason. Over a cached reading,
+  the status label's tooltip shows the reason.
 - A successful reading refreshes the last-good cache. Successful derived usage
   is persisted across relaunches in
   `~/Library/Application Support/Alight/usage-cache.json` (mode `0600`). It
@@ -137,6 +185,14 @@ never become numbers.
   Claude Code for `/usage` removes the token reading, the private endpoint
   client, and the renewal workaround; the six-hour cache limit, account
   binding, and session-only acceptance fix the other two.
+- **2026-10-08: review fixes.** Reset dates in another year (`Jan 2, 2027 at
+  9am`) were rejected, which would have dropped the Claude reading around
+  every New Year; the parser now reads the stated year. The child process
+  inherited a dispatch thread's blocked signals and ignored SIGTERM; it now
+  starts with a clean mask. The one-minute signed-out recheck, lost in the
+  switch, is back, and deferred cycles keep Sign in visible. The
+  CLI override keeps its original name, `ALIGHT_CLAUDE_CLI`, and Volta, Bun
+  and nvm installs are found again without a shell.
 
 Claude Desktop's plan display uses its own web session and organization usage
 route. Do not read Desktop cookies, Chromium storage, or private in-process

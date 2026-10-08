@@ -23,17 +23,10 @@ final class UsageStore {
   @ObservationIgnored private var forceRefreshPending = false
   @ObservationIgnored private var activeRefreshIsForced = false
 
-  // Each Claude poll starts Claude Code's CLI (`auth status`, then `/usage`),
-  // so scheduled polls run at most every three minutes and back off on
-  // failure, decoupled from Codex's per-minute cadence. The single-flight
+  // Each Claude poll starts Claude Code's CLI, so it runs on its own gentle
+  // schedule, decoupled from Codex's per-minute cadence. The single-flight
   // refresh above means two Claude polls never overlap.
-  static let claudeBaseInterval: TimeInterval = 180
-  static let claudeMaxBackoff: TimeInterval = 900
-  private var claudeNextAllowed: Date = .distantPast
-  private var claudeBackoff: TimeInterval = 0
-  /// Account of the latest Claude attempt. Deferred cycles carry it so the
-  /// cache only reuses readings from the account that was last verified.
-  private var claudeIdentity: UsageObservationIdentity?
+  @ObservationIgnored private var claudeSchedule = ClaudePollSchedule()
 
   init(history: UsageHistory = UsageHistory(), resultCache: UsageResultCache = UsageResultCache()) {
     self.history = history
@@ -82,8 +75,8 @@ final class UsageStore {
     let claudeResult: ProviderResult
     var claudeCapturedAt: Date?
     let cacheAgeBeforePoll = resultCache.cacheAge(for: .claude, now: now) ?? -1
-    let nextAllowedBeforePoll = max(0, claudeNextAllowed.timeIntervalSince(now))
-    let isClaudeDue = now >= claudeNextAllowed
+    let nextAllowedBeforePoll = max(0, claudeSchedule.nextAllowed.timeIntervalSince(now))
+    let isClaudeDue = claudeSchedule.isDue(at: now)
     Self.logger.info(
       "Claude refresh decision force=\(force, privacy: .public) due=\(isClaudeDue, privacy: .public) next_allowed_in=\(nextAllowedBeforePoll, privacy: .public) cache_age=\(cacheAgeBeforePoll, privacy: .public)"
     )
@@ -91,28 +84,16 @@ final class UsageStore {
       let fresh = await claude.result(now: now)
       let capturedAt = Date()
       claudeCapturedAt = capturedAt
-      claudeIdentity = fresh.observationIdentity
-      (claudeBackoff, claudeNextAllowed) = Self.nextClaudePoll(
-        after: fresh,
-        previousBackoff: claudeBackoff,
-        now: capturedAt
-      )
+      claudeSchedule.record(fresh, at: capturedAt)
       claudeResult = fresh
-      Self.logClaudeLiveAttempt(fresh, now: capturedAt, nextAllowed: claudeNextAllowed)
+      Self.logClaudeLiveAttempt(fresh, now: capturedAt, nextAllowed: claudeSchedule.nextAllowed)
     } else {
-      // Not due yet: reuse a reset-bounded cache if one exists, and tell the menu
-      // when the next live poll is expected rather than pretending this is live.
-      let wait = claudeNextAllowed.timeIntervalSince(now)
-      claudeResult = .failure(
-        .claude,
-        source: "deferred",
-        error: claudeNextAllowed == .distantFuture
-          ? "Claude polling stopped; Refresh to retry"
-          : "next live poll in \(ProviderResult.compactDuration(wait))",
-        observationIdentity: claudeIdentity
-      )
+      // Not due yet: reuse a reset-bounded cache if one exists, and keep the
+      // latest attempt's account, sign-in state, and reason rather than
+      // pretending this is live.
+      claudeResult = claudeSchedule.deferredResult(now: now)
       Self.logger.info(
-        "Claude live attempt skipped source=deferred next_allowed_in=\(max(0, wait), privacy: .public) cache_age=\(cacheAgeBeforePoll, privacy: .public)"
+        "Claude live attempt skipped source=deferred next_allowed_in=\(nextAllowedBeforePoll, privacy: .public) cache_age=\(cacheAgeBeforePoll, privacy: .public)"
       )
     }
 
@@ -137,22 +118,6 @@ final class UsageStore {
     )
   }
 
-  /// Schedule after a Claude attempt: every three minutes while it succeeds;
-  /// after a failure, three minutes doubling to fifteen. A refusal (Claude
-  /// Code answered `/usage` with a model turn) stops scheduled polls until a
-  /// manual Refresh, so a changed CLI cannot spend inference every poll.
-  static func nextClaudePoll(after result: ProviderResult, previousBackoff: TimeInterval,
-    now: Date) -> (backoff: TimeInterval, nextAllowed: Date) {
-    if result.ok {
-      return (0, now.addingTimeInterval(claudeBaseInterval))
-    }
-    if result.source == ClaudeUsageClient.refusedSource {
-      return (0, .distantFuture)
-    }
-    let backoff = previousBackoff == 0 ? claudeBaseInterval : min(claudeMaxBackoff, previousBackoff * 2)
-    return (backoff, now.addingTimeInterval(backoff))
-  }
-
   private static func capture(_ operation: @Sendable () async -> ProviderResult) async -> (ProviderResult, Date) {
     let result = await operation()
     return (result, Date())
@@ -161,14 +126,78 @@ final class UsageStore {
   private static func logClaudeLiveAttempt(_ result: ProviderResult, now: Date, nextAllowed: Date) {
     let summary = ClaudeWindowLogSummary(result: result, now: now)
     logger.info(
-      "Claude live attempt ok=\(result.ok, privacy: .public) source=\(result.source, privacy: .public) error=\(result.error ?? "none", privacy: .public) next_allowed_in=\(max(0, nextAllowed.timeIntervalSince(now)), privacy: .public) windows=\(result.windows.count, privacy: .public) fast_used=\(summary.fastUsed, privacy: .public) fast_reset_in=\(summary.fastResetIn, privacy: .public) slow_used=\(summary.slowUsed, privacy: .public) slow_reset_in=\(summary.slowResetIn, privacy: .public)"
+      "Claude live attempt ok=\(result.ok, privacy: .public) source=\(result.source, privacy: .public) needs_auth=\(result.needsAuth, privacy: .public) error=\(result.error ?? "none", privacy: .private) next_allowed_in=\(max(0, nextAllowed.timeIntervalSince(now)), privacy: .public) windows=\(result.windows.count, privacy: .public) fast_used=\(summary.fastUsed, privacy: .public) fast_reset_in=\(summary.fastResetIn, privacy: .public) slow_used=\(summary.slowUsed, privacy: .public) slow_reset_in=\(summary.slowResetIn, privacy: .public)"
     )
   }
 
   private static func logClaudeStatus(_ result: ProviderResult, now: Date) {
     let summary = ClaudeWindowLogSummary(result: result, now: now)
     logger.info(
-      "Claude status ok=\(result.ok, privacy: .public) source=\(result.source, privacy: .public) error=\(result.error ?? "none", privacy: .public) cache_age=\(result.cacheAgeSeconds ?? -1, privacy: .public) windows=\(result.windows.count, privacy: .public) fast_used=\(summary.fastUsed, privacy: .public) fast_reset_in=\(summary.fastResetIn, privacy: .public) slow_used=\(summary.slowUsed, privacy: .public) slow_reset_in=\(summary.slowResetIn, privacy: .public)"
+      "Claude status ok=\(result.ok, privacy: .public) source=\(result.source, privacy: .public) needs_auth=\(result.needsAuth, privacy: .public) error=\(result.error ?? "none", privacy: .private) cache_age=\(result.cacheAgeSeconds ?? -1, privacy: .public) windows=\(result.windows.count, privacy: .public) fast_used=\(summary.fastUsed, privacy: .public) fast_reset_in=\(summary.fastResetIn, privacy: .public) slow_used=\(summary.slowUsed, privacy: .public) slow_reset_in=\(summary.slowResetIn, privacy: .public)"
+    )
+  }
+}
+
+/// When Claude Code is next asked for usage, and what the menu shows until then.
+///
+/// - Success: every three minutes.
+/// - Signed out (`auth status` said so): every minute. Only that local check
+///   runs (about 0.2 s), and usage is read as soon as the user signs in.
+/// - Any other failure: three minutes, doubling to fifteen.
+/// - Refusal (Claude Code answered `/usage` with a model turn): no scheduled
+///   polls until a manual Refresh, so a changed CLI cannot spend inference
+///   every poll.
+///
+/// Between polls, `deferredResult` carries the latest attempt's account,
+/// sign-in state, and failure reason, so the menu keeps offering Sign in to
+/// Claude… and the cache only reuses readings from the account last verified.
+struct ClaudePollSchedule {
+  static let baseInterval: TimeInterval = 180
+  static let maxBackoff: TimeInterval = 900
+  static let signedOutInterval: TimeInterval = 60
+
+  private(set) var nextAllowed: Date = .distantPast
+  private(set) var backoff: TimeInterval = 0
+  private(set) var lastAttempt: ProviderResult?
+
+  func isDue(at now: Date) -> Bool {
+    now >= nextAllowed
+  }
+
+  mutating func record(_ attempt: ProviderResult, at now: Date) {
+    lastAttempt = attempt
+    if attempt.ok {
+      backoff = 0
+      nextAllowed = now.addingTimeInterval(Self.baseInterval)
+    } else if attempt.source == ClaudeUsageClient.refusedSource {
+      backoff = 0
+      nextAllowed = .distantFuture
+    } else if attempt.source == ClaudeUsageClient.signedOutSource {
+      backoff = 0
+      nextAllowed = now.addingTimeInterval(Self.signedOutInterval)
+    } else {
+      backoff = backoff == 0 ? Self.baseInterval : min(Self.maxBackoff, backoff * 2)
+      nextAllowed = now.addingTimeInterval(backoff)
+    }
+  }
+
+  func deferredResult(now: Date) -> ProviderResult {
+    let wait = nextAllowed == .distantFuture
+      ? nil
+      : ProviderResult.compactDuration(max(0, nextAllowed.timeIntervalSince(now)))
+    let error: String
+    if let lastAttempt, !lastAttempt.ok, let reason = lastAttempt.error {
+      // A refusal's reason already says to update and Refresh.
+      error = wait.map { "\(reason) · retry in \($0)" } ?? reason
+    } else {
+      error = wait.map { "next live poll in \($0)" } ?? "Claude polling stopped; Refresh to retry"
+    }
+    return .failure(
+      .claude,
+      source: "deferred",
+      error: error,
+      needsAuth: lastAttempt?.needsAuth ?? false,
+      observationIdentity: lastAttempt?.observationIdentity
     )
   }
 }
@@ -293,8 +322,7 @@ struct UsageResultCache: Sendable {
         source: result.source,
         error: Self.messageWithLastLive(result.error, age: age),
         needsAuth: result.needsAuth,
-        cacheAgeSeconds: age,
-        retryAfterSeconds: result.retryAfterSeconds
+        cacheAgeSeconds: age
       )
     }
 
@@ -306,7 +334,6 @@ struct UsageResultCache: Sendable {
       windows: validWindows,
       needsAuth: result.needsAuth,
       cacheAgeSeconds: age,
-      retryAfterSeconds: result.retryAfterSeconds,
       observationIdentity: result.observationIdentity
     )
   }

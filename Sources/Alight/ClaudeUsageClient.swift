@@ -5,12 +5,13 @@ import OSLog
 /// Reads Claude plan usage by running Claude Code's own headless `/usage`
 /// command:
 ///
-///     claude -p /usage --output-format json --no-session-persistence
+///     claude -p /usage --output-format json --no-session-persistence --safe-mode
 ///
 /// `/usage` is a local command. Claude Code answers it without a model turn
-/// (`num_turns` 0, cost 0, about a second) and handles its own login and token
-/// renewal. Alight therefore never reads Claude credentials, never calls
-/// Anthropic endpoints itself, and never presents itself as another client.
+/// (`num_turns` 0, cost 0; measured at 2-4 s and about 1.8 CPU-seconds) and
+/// handles its own login and token renewal. Alight therefore never reads
+/// Claude credentials, never calls Anthropic endpoints itself, and never
+/// presents itself as another client.
 ///
 /// Each poll first runs `claude auth status --json` to learn which account
 /// the reading belongs to. Only a domain-separated SHA-256 of the account's
@@ -19,8 +20,11 @@ import OSLog
 /// fully verify becomes an explicit failure. It never becomes a guessed number.
 struct ClaudeUsageClient: Sendable {
   /// `--no-session-persistence` keeps each poll from saving a resumable
-  /// session transcript under `~/.claude/projects/`.
-  static let usageArguments = ["-p", "/usage", "--output-format", "json", "--no-session-persistence"]
+  /// session transcript under `~/.claude/projects/`. `--safe-mode` keeps it
+  /// from loading the user's hooks, plugins, and MCP servers, which would
+  /// otherwise start (and fire SessionStart/SessionEnd hooks) on every poll.
+  /// Login and the built-in `/usage` command work normally in safe mode.
+  static let usageArguments = ["-p", "/usage", "--output-format", "json", "--no-session-persistence", "--safe-mode"]
   static let authStatusArguments = ["auth", "status", "--json"]
   static let timeout: TimeInterval = 30
   static let outputLimit = 256 * 1024
@@ -28,6 +32,10 @@ struct ClaudeUsageClient: Sendable {
   /// The store stops scheduled Claude polls after it, so a CLI that stops
   /// treating `/usage` as a local command cannot spend inference every poll.
   static let refusedSource = "refused"
+  /// Result `source` when `auth status` reported a signed-out CLI. Only that
+  /// cheap, local check ran, so the store rechecks every minute and reads
+  /// usage as soon as the user signs in.
+  static let signedOutSource = "signed-out"
   static let identitySource = "claude-code:/usage"
 
   private static let logger = Logger(subsystem: "com.owlandkestrel.alight", category: "usage")
@@ -43,14 +51,15 @@ struct ClaudeUsageClient: Sendable {
     switch Self.resolveExecutable(
       environment: environment,
       homeDirectory: homeDirectory,
-      isExecutable: { FileManager.default.isExecutableFile(atPath: $0) }
+      isExecutable: { FileManager.default.isExecutableFile(atPath: $0) },
+      listDirectory: { try? FileManager.default.contentsOfDirectory(atPath: $0) }
     ) {
     case .found(let path):
       executable = path
     case .overrideNotExecutable:
-      return .failure(.claude, source: "error", error: "ALIGHT_CLAUDE_BIN is not an executable file")
+      return .failure(.claude, source: "error", error: "ALIGHT_CLAUDE_CLI is not an executable file")
     case .notFound:
-      return .failure(.claude, source: "error", error: "Claude Code CLI not found (install it or set ALIGHT_CLAUDE_BIN)")
+      return .failure(.claude, source: "error", error: "Claude Code CLI not found (install it or set ALIGHT_CLAUDE_CLI)")
     }
     do {
       try FileManager.default.createDirectory(
@@ -64,7 +73,8 @@ struct ClaudeUsageClient: Sendable {
     let childEnvironment = Self.childEnvironment(
       executable: executable,
       homeDirectory: homeDirectory,
-      user: NSUserName()
+      user: NSUserName(),
+      temporaryDirectory: NSTemporaryDirectory()
     )
 
     // `auth status` exits 1 when signed out but still prints its JSON.
@@ -80,7 +90,7 @@ struct ClaudeUsageClient: Sendable {
     }
     let status = auth.failure == nil ? ClaudeAuthStatus.parse(auth.stdout) : nil
     if let status, !status.loggedIn {
-      return .failure(.claude, source: "error", error: "not signed in to Claude Code", needsAuth: true)
+      return .failure(.claude, source: Self.signedOutSource, error: "not signed in to Claude Code", needsAuth: true)
     }
     let identity = status?.identity
     if identity == nil {
@@ -111,7 +121,7 @@ struct ClaudeUsageClient: Sendable {
       case .launchFailed: "could not start the Claude Code CLI"
       case .timedOut: "Claude Code /usage timed out"
       case .outputLimitExceeded: "Claude Code /usage output too large"
-      case .outputIncomplete, .signaled: "Claude Code /usage did not finish cleanly"
+      case .outputIncomplete, .signaled, .statusUnavailable: "Claude Code /usage did not finish cleanly"
       }
       return .failure(.claude, source: "error", error: message)
     }
@@ -125,6 +135,10 @@ struct ClaudeUsageClient: Sendable {
       let detail = firstLine(of: run.stderr)
       if let detail, ClaudeUsageParser.mentionsSignIn(detail) {
         return .failure(.claude, source: "error", error: "not signed in to Claude Code", needsAuth: true)
+      }
+      if let detail, detail.localizedCaseInsensitiveContains("unknown option") {
+        // An older CLI that lacks a flag Alight passes.
+        return .failure(.claude, source: "error", error: "update Claude Code (\(detail))")
       }
       let status = run.status.map(String.init) ?? "?"
       return .failure(
@@ -152,24 +166,33 @@ struct ClaudeUsageClient: Sendable {
     case notFound
   }
 
-  /// `ALIGHT_CLAUDE_BIN` first, then the standard install locations. A login
-  /// item does not inherit the user's shell `PATH`, so there is no PATH search.
+  /// `ALIGHT_CLAUDE_CLI` first, then the standard install locations and the
+  /// usual Node version managers (Volta, Bun, the newest nvm Node). A login
+  /// item does not inherit the user's shell `PATH`, so there is no PATH search
+  /// and no shell lookup.
   static func resolveExecutable(
     environment: [String: String],
     homeDirectory: URL,
-    isExecutable: (String) -> Bool
+    isExecutable: (String) -> Bool,
+    listDirectory: (String) -> [String]?
   ) -> ExecutableResolution {
-    if let raw = environment["ALIGHT_CLAUDE_BIN"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+    if let raw = environment["ALIGHT_CLAUDE_CLI"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
       let path = (raw as NSString).expandingTildeInPath
       return path.hasPrefix("/") && isExecutable(path) ? .found(path) : .overrideNotExecutable
     }
     let home = homeDirectory.path
-    let candidates = [
+    var candidates = [
       "\(home)/.local/bin/claude",
       "/opt/homebrew/bin/claude",
       "/usr/local/bin/claude",
       "\(home)/.claude/local/claude",
+      "\(home)/.volta/bin/claude",
+      "\(home)/.bun/bin/claude",
     ]
+    let nvmVersions = "\(home)/.nvm/versions/node"
+    candidates += (listDirectory(nvmVersions) ?? [])
+      .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+      .map { "\(nvmVersions)/\($0)/bin/claude" }
     return candidates.first(where: isExecutable).map(ExecutableResolution.found) ?? .notFound
   }
 
@@ -177,14 +200,17 @@ struct ClaudeUsageClient: Sendable {
   /// environment is forwarded, so variables such as `CLAUDE_CODE_OAUTH_TOKEN`
   /// or `ANTHROPIC_API_KEY` cannot switch Claude Code to another login.
   /// - `PATH` adds the CLI's own directory, where an npm install finds `node`.
+  /// - `TMPDIR` is the per-user temporary folder rather than the shared `/tmp`.
   /// - `LANG` is fixed so reset dates are always rendered in English.
   /// - `DISABLE_AUTOUPDATER` keeps a usage poll from updating Claude Code.
-  static func childEnvironment(executable: String, homeDirectory: URL, user: String) -> [String: String] {
+  static func childEnvironment(executable: String, homeDirectory: URL, user: String,
+    temporaryDirectory: String) -> [String: String] {
     let binDirectory = (executable as NSString).deletingLastPathComponent
     return [
       "HOME": homeDirectory.path,
       "USER": user,
       "PATH": "/usr/bin:/bin:\(binDirectory)",
+      "TMPDIR": temporaryDirectory,
       "LANG": "en_US.UTF-8",
       "DISABLE_AUTOUPDATER": "1",
     ]
@@ -260,12 +286,16 @@ struct ClaudeAuthStatus: Equatable {
 ///     Current week (all models): 40% used · resets Oct 14 at 9am (America/Guayaquil)
 ///     Current week (Fable): 0% used · resets Oct 8 at 7pm (America/Guayaquil)
 ///
+/// Claude Code prints one `<title>: <floor(utilization)>% used` line per limit,
+/// followed by ` · resets <date>` when the limit has a reset time.
 /// `Current session` is the five-hour window, `Current week (all models)` the
-/// weekly window, and `Current week (<Model>)` a model-scoped weekly window.
-/// Fable keeps its outer-edge star; every other model is a dropdown row. A
-/// plan may have no `all models` weekly line (a Team seat, for example): the
-/// command prints every limit the plan has, so a session-only reading is
-/// complete. Other lines (the usage breakdown) are ignored.
+/// weekly window, and `Current week (<Model>)` a model-scoped weekly window
+/// (`Sonnet only` on Max and Team plans, `Fable`, and any other model the
+/// account reports). Fable keeps its outer-edge star; every other model is a
+/// dropdown row. A plan may have no `all models` weekly line (a Team seat, for
+/// example): the command prints every limit the plan has, so a session-only
+/// reading is complete. Other lines (the usage breakdown, spend limits) are
+/// ignored.
 enum ClaudeUsageParser {
   static let sessionDuration: TimeInterval = 5 * 3600
   static let weekDuration: TimeInterval = 7 * 24 * 3600
@@ -285,7 +315,7 @@ enum ClaudeUsageParser {
       switch self {
       case .notJSON: "unexpected Claude Code /usage output"
       case .unexpectedShape: "unexpected Claude Code /usage result"
-      case .modelTurn: "stopped: Claude Code answered /usage with a model turn; update Claude Code, then Refresh"
+      case .modelTurn: "Stopped: /usage ran a model turn. Update Claude Code, then Refresh"
       case .notUsageCommand: "Claude Code did not run its local /usage command"
       case .commandFailed(let detail): "Claude Code /usage failed: \(detail)"
       case .notSignedIn: "not signed in to Claude Code"
@@ -322,11 +352,10 @@ enum ClaudeUsageParser {
       throw Failure.unexpectedShape
     }
     // Refuse before reading anything else: a model turn means the CLI did not
-    // treat `/usage` as a local command, so the text is not a usage report.
-    guard let turns = command.numTurns else {
-      throw Failure.unexpectedShape
-    }
-    if turns != 0 || (command.totalCostUsd ?? 0) > 0 {
+    // treat `/usage` as a local command, so the text is not a usage report. A
+    // result without a turn count cannot rule a model turn out, so it is
+    // refused too rather than retried every poll.
+    guard let turns = command.numTurns, turns == 0, (command.totalCostUsd ?? 0) <= 0 else {
       throw Failure.modelTurn
     }
     let text = command.result ?? ""
@@ -346,11 +375,30 @@ enum ClaudeUsageParser {
     var seen: Set<String> = []
     for rawLine in text.split(whereSeparator: \.isNewline) {
       let line = rawLine.trimmingCharacters(in: .whitespaces)
-      guard let colon = line.firstIndex(of: ":") else { continue }
-      let label = line[..<colon].trimmingCharacters(in: .whitespaces)
-      let value = String(line[line.index(after: colon)...])
-      guard let kind = LineKind(label: label) else { continue }
-      let window = try window(kind: kind, label: label, value: value, now: now)
+      let lowered = line.lowercased()
+      guard lowered.hasPrefix("current session") || lowered.hasPrefix("current week") else {
+        continue
+      }
+      // The label ends at the colon before the percentage, so a model name
+      // that itself contains a colon (`Current week (Fable: Pro): 7% used`)
+      // stays whole instead of becoming an unknown label.
+      let percent = line.firstMatch(of: /(?i):\s*(\d+(?:\.\d+)?)\s*%\s*(used|left|remaining)\b/)
+      let labelEnd = percent?.range.lowerBound ?? line.firstIndex(of: ":") ?? line.endIndex
+      let label = String(line[..<labelEnd].prefix(60)).trimmingCharacters(in: .whitespaces)
+      // A limit line that cannot be classified or read fails the whole
+      // reading: dropping it could hide an active limit, or make a weekly
+      // plan look session-only.
+      guard let kind = LineKind(label: label), let percent, let number = Double(percent.1), number.isFinite else {
+        throw Failure.unrecognizedLine(label)
+      }
+      let used = percent.2.lowercased() == "used" ? number : 100 - number
+      let window = try window(
+        kind: kind,
+        label: label,
+        usedPercent: min(100, max(0, used)),
+        rest: String(line[percent.range.upperBound...]),
+        now: now
+      )
       // First occurrence wins so duplicates stay deterministic.
       if seen.insert(window.id).inserted {
         windows.append(window)
@@ -407,10 +455,7 @@ enum ClaudeUsageParser {
     }
   }
 
-  private static func window(kind: LineKind, label: String, value: String, now: Date) throws -> UsageWindow {
-    guard let usedPercent = usedPercent(in: value) else {
-      throw Failure.unrecognizedLine(label)
-    }
+  private static func window(kind: LineKind, label: String, usedPercent: Double, rest: String, now: Date) throws -> UsageWindow {
     let duration: TimeInterval
     var scope: UsageScope?
     var style = UsageVisualStyle.hand
@@ -433,14 +478,16 @@ enum ClaudeUsageParser {
       guard scope != nil else { throw Failure.unrecognizedLine(label) }
     }
 
-    let resetAt: Date
-    if let clause = resetClause(in: value) {
+    var used = usedPercent
+    var resetAt: Date
+    if let clause = resetClause(in: rest) {
       guard let parsed = ClaudeResetTime.parse(clause, now: now) else {
         throw Failure.unrecognizedLine(label)
       }
       resetAt = parsed
-    } else if usedPercent == 0 {
-      // An unused window may not have started; treat it as a fresh window.
+    } else if used == 0 {
+      // Claude Code omits the reset of a window that has not started; an
+      // unused window is a fresh one.
       resetAt = now.addingTimeInterval(duration)
     } else {
       throw Failure.unrecognizedLine(label)
@@ -450,27 +497,24 @@ enum ClaudeUsageParser {
       resetAt <= now.addingTimeInterval(duration + 24 * 3600) else {
       throw Failure.unrecognizedLine(label)
     }
+    // A reset at or before now (Claude Code prints it to the minute, rounded
+    // down, and the reading is seconds old) means the window has already
+    // reset. Its percentage is no longer live, so show a fresh, unused window.
+    if resetAt <= now {
+      used = 0
+      resetAt = now.addingTimeInterval(duration)
+    }
 
     return PressureMath.window(
       provider: .claude,
       speed: kind.isSession ? .fast : .slow,
-      usedPercent: usedPercent,
+      usedPercent: used,
       resetAt: resetAt,
       limitWindowSeconds: duration,
       now: now,
       scope: scope,
       visualStyle: style
     )
-  }
-
-  /// `16% used` is used; `84% left` / `84% remaining` is converted.
-  private static func usedPercent(in value: String) -> Double? {
-    guard let match = value.firstMatch(of: /(?i)(\d+(?:\.\d+)?)\s*%\s*(used|left|remaining)/),
-      let number = Double(match.1), number.isFinite else {
-      return nil
-    }
-    let percent = match.2.lowercased() == "used" ? number : 100 - number
-    return min(100, max(0, percent))
   }
 
   private static func resetClause(in value: String) -> String? {
@@ -481,20 +525,26 @@ enum ClaudeUsageParser {
   }
 }
 
-/// Parses Claude Code's reset phrases into absolute times:
-/// `Oct 8 at 2pm (America/Guayaquil)`, `Oct 8, 2:30pm (…)`, `Oct 8 at 14:00`,
-/// `2pm (…)` (next occurrence), `Oct 8 (…)` (midnight), and `in 3h 12m`.
-/// The time zone is the IANA name in parentheses; without one, the system
-/// zone the CLI also used. A date with no year takes the year that puts it
-/// closest to `now`, so a December poll reads `Jan 2` as next year.
+/// Parses the reset phrase Claude Code prints after `resets`. Claude Code
+/// 2.1.286 formats every `/usage` reset with its date formatter forced to show
+/// the date, an hour (minutes only when non-zero), and the time zone, and adds
+/// the year whenever the reset is not in the current year:
+///
+///     Oct 8 at 2pm (America/Guayaquil)          JavaScriptCore (the shipped CLI)
+///     Oct 8, 2:30pm (America/Guayaquil)         V8 (Node)
+///     Jan 2, 2027 at 9am (America/Guayaquil)    a reset in another year
+///     Jan 2, 2027, 9am (America/Guayaquil)      the same, from V8
+///     2pm (America/Guayaquil)                   time only: the same formatter's
+///                                               form for a reset within a day
+///                                               when the date is not forced
+///
+/// 24-hour times (`14:05`) are accepted too. The zone is the IANA name in
+/// parentheses; without one, the system zone the CLI also uses. Anything
+/// else, including a date without a time, is rejected rather than guessed.
 enum ClaudeResetTime {
   static func parse(_ clause: String, now: Date) -> Date? {
     var text = clause.trimmingCharacters(in: .whitespacesAndNewlines)
     while let last = text.last, ".,;".contains(last) { text.removeLast() }
-
-    if let match = text.firstMatch(of: /(?i)^in\s+(.+)$/) {
-      return relativeInterval(String(match.1)).map { now.addingTimeInterval($0) }
-    }
 
     var timeZone = TimeZone.current
     if let match = text.firstMatch(of: /\(([^()]+)\)\s*$/) {
@@ -505,8 +555,9 @@ enum ClaudeResetTime {
       text = String(text[..<match.range.lowerBound]).trimmingCharacters(in: .whitespaces)
     }
 
+    // [Month day[, year][,] ][at ]hour[:minutes][am|pm]
     guard let match = text.firstMatch(
-      of: /(?i)^(?:([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?)?\s*(?:(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/
+      of: /(?i)^(?:([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?,?\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/
     ) else {
       return nil
     }
@@ -514,28 +565,37 @@ enum ClaudeResetTime {
     if match.1 != nil && month == nil { return nil }
     let day = match.2.flatMap { Int($0) }
 
-    var hour = 0
-    var minute = 0
-    let hasTime = match.3 != nil
-    if let rawHour = match.3.flatMap({ Int($0) }) {
-      minute = match.4.flatMap { Int($0) } ?? 0
-      guard minute < 60 else { return nil }
-      if let meridiem = match.5?.lowercased() {
-        guard (1...12).contains(rawHour) else { return nil }
-        hour = rawHour % 12 + (meridiem == "pm" ? 12 : 0)
-      } else {
-        // A bare hour is ambiguous; a 24-hour time needs its minutes.
-        guard match.4 != nil, (0...23).contains(rawHour) else { return nil }
-        hour = rawHour
-      }
+    guard let rawHour = Int(match.4) else { return nil }
+    let minute = match.5.flatMap { Int($0) } ?? 0
+    guard minute < 60 else { return nil }
+    let hour: Int
+    if let meridiem = match.6?.lowercased() {
+      guard (1...12).contains(rawHour) else { return nil }
+      hour = rawHour % 12 + (meridiem == "pm" ? 12 : 0)
+    } else {
+      // A bare hour is ambiguous; a 24-hour time needs its minutes.
+      guard match.5 != nil, (0...23).contains(rawHour) else { return nil }
+      hour = rawHour
     }
 
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = timeZone
 
+    // During a fall-back hour an ambiguous wall time resolves to its first
+    // occurrence, so such a reset can read up to an hour early, at most once a
+    // year. The next poll after the real reset corrects it.
     if let month, let day {
-      let year = calendar.component(.year, from: now)
-      let candidates = [year - 1, year, year + 1].compactMap { candidateYear -> Date? in
+      let years: [Int]
+      if let year = match.3.flatMap({ Int($0) }) {
+        years = [year]
+      } else {
+        // No year means the current year. The closest of the neighboring
+        // years is the current one, except for a poll that straddles
+        // midnight on Dec 31, which it also reads correctly.
+        let year = calendar.component(.year, from: now)
+        years = [year - 1, year, year + 1]
+      }
+      let candidates = years.compactMap { candidateYear -> Date? in
         let components = DateComponents(year: candidateYear, month: month, day: day, hour: hour, minute: minute)
         guard let date = calendar.date(from: components),
           calendar.component(.month, from: date) == month,
@@ -548,37 +608,11 @@ enum ClaudeResetTime {
     }
 
     // Time only: the next occurrence of that wall-clock time.
-    guard hasTime else { return nil }
     var components = calendar.dateComponents([.year, .month, .day], from: now)
     components.hour = hour
     components.minute = minute
     guard let today = calendar.date(from: components) else { return nil }
     return today > now ? today : calendar.date(byAdding: .day, value: 1, to: today)
-  }
-
-  /// `3h 12m`, `2d 4h`, `45m`, `1 hour 5 minutes`.
-  static func relativeInterval(_ text: String) -> TimeInterval? {
-    var remaining = Substring(text.lowercased())
-    var total: TimeInterval = 0
-    var matchedAny = false
-    while true {
-      remaining = remaining.drop { $0 == " " || $0 == "," }
-      if remaining.hasPrefix("and ") { remaining = remaining.dropFirst(4); continue }
-      if remaining.isEmpty { break }
-      guard let match = remaining.prefixMatch(of: /(\d+)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m)\b/),
-        let amount = Double(match.1) else {
-        return nil
-      }
-      let unit: TimeInterval = switch match.2.first {
-      case "d": 24 * 3600
-      case "h": 3600
-      default: 60
-      }
-      total += amount * unit
-      matchedAny = true
-      remaining = remaining[match.range.upperBound...]
-    }
-    return matchedAny ? total : nil
   }
 
   private static func monthNumber(_ name: String) -> Int? {
