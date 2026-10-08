@@ -40,7 +40,7 @@ canvas itself clips them.
 The native app:
 
 - reads local Codex auth from `~/.codex/auth.json` and calls the ChatGPT usage endpoint Codex uses;
-- gets a Claude Code OAuth token and calls Anthropic's subscription usage endpoint (`/api/oauth/usage`), mapping the `five_hour` / `seven_day` windows onto the fast/slow hands and active Fable `limits[]` usage onto the outer-edge star;
+- runs Claude Code's own headless `/usage` command (`claude -p /usage --output-format json`), mapping its current session onto the fast hand, its all-models week (when the plan has one) onto the slow hand, and its Fable week onto the outer-edge star;
 - reads local Antigravity credentials and queries the native Antigravity backend (`daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`), mapping the Gemini 5-hour and weekly limits to fast/slow purple hands and secondary model groups to dropdown menu rows.
 
 It never prints or stores credentials. Each provider is polled independently, so one being unavailable never blocks the others. Alight persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary. Cached pressure is recalculated against the current clock instead of freezing at capture time.
@@ -75,9 +75,10 @@ Forecasts require a verified account/source partition and at least three recent
 readings spanning ten minutes. Account/source/reset/duration/reported-limit changes,
 usage decreases and gaps over fifteen minutes break continuity. Thin, zero-rate,
 stale, reversed-clock and expired data yield an explicit reason and recovery text.
-Claude and Antigravity currently expose no verified account identity in their
-result contract: their observations are isolated points with forecasts unavailable.
-Codex without an account ID behaves the same way. An unreported plan/denominator
+Claude readings carry a hashed account identity from `claude auth status`, so
+they join like Codex readings. Antigravity currently exposes no verified account
+identity in its result contract: its observations are isolated points with
+forecasts unavailable. Codex without an account ID behaves the same way. An unreported plan/denominator
 change cannot be detected from percentages; projections explicitly retain that
 limitation rather than inventing a quota amount.
 
@@ -89,28 +90,25 @@ Antigravity probe; use ordinary resource admission and cached dependencies when
 provider calls are out of scope. Mounting the real window and discoverable menu
 integration still require the separate UI custody and visual acceptance gates.
 
-### Claude Code credential
+### Claude Code usage
 
-The reader is **read-only** and never writes to the Keychain (writing back a rotated token via the `security` CLI can reset the item's ACL and lock Claude Code out of its own credential — so we don't). The token is resolved in precedence order:
-
-1. **`CLAUDE_CODE_OAUTH_TOKEN`** env var.
-2. **Token file** — `~/.alight/claude-token` (override with `ALIGHT_CLAUDE_TOKEN_FILE`). First non-comment line. This is the reliable channel for a menu-bar/login-item app, which does not inherit your shell environment.
-3. **Keychain** (macOS) — shell out to the trusted `security` binary for the `Claude Code-credentials` item (mirrors Astra's `providers/cli.py`). An unsigned app reading it directly via the Security framework fails the ACL check, so the `security` route is what works. macOS may ask permission — choose *Always Allow*.
-
-For an **always-live** Claude hand without keychain risk, mint a long-lived token and drop it in the file:
+Alight asks Claude Code itself. Each Claude poll runs, directly and without a shell:
 
 ```sh
-claude setup-token
-mkdir -p ~/.alight
-printf '%s\n' '<token>' > ~/.alight/claude-token
-chmod 600 ~/.alight/claude-token
+claude auth status --json          # which account, and is it signed in?
+claude -p /usage --output-format json --no-session-persistence
 ```
 
-When relying only on the Keychain, an expired access token degrades to `token expired — open Claude Code to refresh` until Claude Code renews it. The usage URL can be overridden with `ALIGHT_CLAUDE_USAGE_URL`. Manual Refresh forces a Claude usage poll; the background loop polls Claude gently, respects server `Retry-After` cooldowns, coalesces overlapping refreshes, and labels fallback data with cache age.
+`/usage` is a local command: Claude Code answers it without a model turn (no inference, no cost, about a second) and handles its own login and token renewal. Alight reads no Claude credentials, never touches the `Claude Code-credentials` Keychain item, and makes no Anthropic request of its own. If Claude Code ever answers `/usage` with a model turn, Alight refuses the reading and stops scheduled Claude polls until you press Refresh.
 
-Claude Desktop's always-populated plan display is not a supported alternate source. Desktop uses its own web session and organization usage route, while Alight uses the separate Claude Code OAuth credential. Alight deliberately does not borrow Desktop cookies or private app state.
+- **CLI location:** `ALIGHT_CLAUDE_BIN`, else the first of `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, `~/.claude/local/claude`.
+- **Isolation:** stdin is `/dev/null`, the working directory is `~/Library/Application Support/Alight`, the environment is only `HOME`, `USER`, `PATH`, `LANG=en_US.UTF-8` and `DISABLE_AUTOUPDATER=1`, output is bounded, and a 30-second deadline stops the CLI's whole process group.
+- **Plans:** a Team seat reports only a session limit plus model-scoped weeks (such as Fable); that is a complete reading. Pro/Max plans also report `Current week (all models)`.
+- **Polling:** at most every three minutes, backing off to fifteen after failures; Manual Refresh polls immediately. Only one `claude` process runs at a time.
+- **Failures** are shown as such (for example `Claude Code /usage timed out` or `unrecognized Claude Code usage line: …`) and never as guessed numbers. When Claude Code is signed out, the menu offers **Sign in to Claude…** (`claude auth login`).
+- **Cache:** a Claude reading is reused only for the same account (a domain-separated SHA-256 of its email and organization plus the plan name; the raw email is never stored). A different, unknown, or signed-out account drops it, and no cached reading older than six hours is shown.
 
-> Alight intentionally does not refresh or rewrite Claude Code's shared Keychain item. The durable credential path is a user-created `claude setup-token`; the durable display path is the explicitly aged, reset-bounded last-known cache.
+Claude Desktop's always-populated plan display is not a supported alternate source. Alight deliberately does not borrow Desktop cookies or private app state.
 
 ### Antigravity credential
 

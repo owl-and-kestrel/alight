@@ -203,13 +203,12 @@ struct ProviderResult: Sendable {
   var cacheAgeSeconds: TimeInterval? = nil
   /// Server-provided retry delay for transient failures such as HTTP 429.
   var retryAfterSeconds: TimeInterval? = nil
-  /// When the credential behind this reading expires, if known. Lets the
-  /// scheduler poll (and renew) just before expiry instead of discovering an
-  /// expired token on the next gentle poll.
-  var credentialExpiresAt: Date? = nil
   /// Derived provenance from the same auth snapshot used for this request.
   /// Nil means account continuity is unverified: display isolated observations,
-  /// but never join them into a consumption rate. This grants no authority.
+  /// but never join them into a consumption rate. A failure may carry it too,
+  /// when the account was identified but usage was not read; the cache uses
+  /// it to decide whether a last-known reading still belongs to this account.
+  /// This grants no authority.
   var observationIdentity: UsageObservationIdentity? = nil
 
   var cacheAgeDisplay: String? {
@@ -233,7 +232,7 @@ struct ProviderResult: Sendable {
     needsAuth: Bool = false,
     cacheAgeSeconds: TimeInterval? = nil,
     retryAfterSeconds: TimeInterval? = nil,
-    credentialExpiresAt: Date? = nil
+    observationIdentity: UsageObservationIdentity? = nil
   ) -> ProviderResult {
     ProviderResult(
       provider: provider,
@@ -244,7 +243,7 @@ struct ProviderResult: Sendable {
       needsAuth: needsAuth,
       cacheAgeSeconds: cacheAgeSeconds,
       retryAfterSeconds: retryAfterSeconds,
-      credentialExpiresAt: credentialExpiresAt
+      observationIdentity: observationIdentity
     )
   }
 

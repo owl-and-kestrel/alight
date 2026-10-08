@@ -5,7 +5,7 @@
 Alight currently shows only the latest usage reading per provider. Persist a
 local history so a quota that "ticked down to 0" can be explained after the fact.
 
-- Sample the same Codex/Claude usage endpoints Alight already polls and append
+- Sample the same Codex/Claude usage sources Alight already polls and append
   `(timestamp, provider, limit_id, window, used_percent, resets_at)` to a local
   ledger (SQLite or JSONL under `~/Library/Application Support/Alight/`).
 - Join the timeline against Codex's own local evidence: every rollout under

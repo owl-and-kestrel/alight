@@ -206,8 +206,10 @@ Import Settings choice, which applies an allowlist before launch. Choosing
 
 Dedicated token files are user-managed credentials. The migration command never
 reads or copies token bytes; it reports the old and new paths so the owner can
-copy them with mode `0600` during the reviewed cutover. Shared Claude and Gemini
-Keychain items retain their provider-owned identities and are read only. Remove
+copy them with mode `0600` during the reviewed cutover. The shared Gemini
+Keychain item retains its provider-owned identity and is read only; Alight no
+longer reads any Claude credential (Claude usage comes from Claude Code's own
+`/usage` command), so there is no Claude token file to carry across. Remove
 the migration command and the bridge packaging after one completed Alight
 release cycle and verified user migration.
 

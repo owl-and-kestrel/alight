@@ -33,7 +33,7 @@ struct AntigravityUsageSourceTests {
     #expect(!identity.contains("private"))
   }
 
-  @Test("legacy Antigravity readings are dropped while Codex and Claude survive")
+  @Test("legacy Antigravity and unbound Claude readings are dropped while Codex survives")
   func legacyMigration() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -53,7 +53,8 @@ struct AntigravityUsageSourceTests {
     #expect(cache.cacheAge(for: .antigravity, now: now) == nil)
     #expect(!cache.reconcile(failure(.antigravity), now: now).ok)
     #expect(cache.reconcile(failure(.codex), now: now).source == "cached")
-    #expect(cache.reconcile(failure(.claude), now: now).source == "cached")
+    // Claude readings must carry the account they came from (see UsageResultCacheTests).
+    #expect(!cache.reconcile(failure(.claude), now: now).ok)
     #expect(cache.reconcile(live(.antigravity), now: now).source == "live")
     var restored = UsageResultCache(persistenceURL: url)
     #expect(restored.reconcile(failure(.antigravity), now: now).source == "cached")
@@ -70,10 +71,10 @@ struct AntigravityUsageSourceTests {
       let url = directory.appending(path: "usage-cache.json")
       var first = UsageResultCache(persistenceURL: url, antigravitySourceIdentity: firstIdentity)
       _ = first.reconcile(live(.antigravity), now: now)
-      _ = first.reconcile(live(.claude), now: now)
+      _ = first.reconcile(live(.codex), now: now)
       var second = UsageResultCache(persistenceURL: url, antigravitySourceIdentity: secondIdentity)
       #expect(!second.reconcile(failure(.antigravity), now: now).ok)
-      #expect(second.reconcile(failure(.claude), now: now).source == "cached")
+      #expect(second.reconcile(failure(.codex), now: now).source == "cached")
       #expect(second.cacheAge(for: .antigravity, now: now) == nil)
     }
   }

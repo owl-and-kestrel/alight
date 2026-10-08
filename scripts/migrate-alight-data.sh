@@ -14,8 +14,6 @@ OLD_DOMAIN="com.owlandkestrel.glideslope"
 OLD_CACHE="$USER_HOME/Library/Application Support/Glideslope/usage-cache.json"
 OLD_CLI_STATE="$USER_HOME/.codex-usage-pressure/state.json"
 NEW_CLI_STATE="$USER_HOME/.alight/state.json"
-OLD_CLAUDE_TOKEN="$USER_HOME/.glideslope/claude-token"
-NEW_CLAUDE_TOKEN="$USER_HOME/.alight/claude-token"
 OLD_ANTIGRAVITY_TOKEN="$USER_HOME/.glideslope/antigravity-token"
 NEW_ANTIGRAVITY_TOKEN="$USER_HOME/.alight/antigravity-token"
 
@@ -84,8 +82,8 @@ else
 fi
 
 echo "credentials: no credential bytes are copied by this command"
+# Claude needs no token file: Alight reads Claude usage through Claude Code.
 for pair in \
-  "$OLD_CLAUDE_TOKEN:$NEW_CLAUDE_TOKEN" \
   "$OLD_ANTIGRAVITY_TOKEN:$NEW_ANTIGRAVITY_TOKEN"; do
   old_path="${pair%%:*}"
   new_path="${pair#*:}"

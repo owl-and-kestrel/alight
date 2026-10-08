@@ -113,24 +113,52 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
 
 ### Claude Code
 
-- Resolve the OAuth access token in precedence order: (1) `CLAUDE_CODE_OAUTH_TOKEN` env, (2) token file `~/.alight/claude-token` (override `ALIGHT_CLAUDE_TOKEN_FILE`) — the reliable channel for a GUI/login-item app that doesn't inherit the shell env, (3) the `Claude Code-credentials` Keychain item via `security find-generic-password -s … -w` (mirrors Astra's `providers/cli.py`; shelling out avoids the ACL failure an unsigned app hits through the Security framework). For an always-live hand, `claude setup-token` mints a long-lived token for the env/file path.
-- Call Anthropic's subscription usage endpoint (`https://api.anthropic.com/api/oauth/usage`, overridable via `ALIGHT_CLAUDE_USAGE_URL`) with `Authorization: Bearer …`.
-- Map `five_hour` → fast and `seven_day` → slow. Each window carries `utilization` (0–100 percent) and `resets_at` (ISO-8601); the decoder tolerates a few alternate field names but is pinned to this shape.
-- The response also includes a `limits` array with richer session/weekly/scoped
-  entries. A 2026-07-04 live payload showed active `weekly_scoped` usage for
-  model `Fable`; Alight renders that scoped limit as a four-pointed star on
-  the dial's outer edge and as a Claude dropdown row while the latest fresh
-  successful response includes it.
-  Model-specific top-level buckets such as `seven_day_sonnet` and
-  `seven_day_opus` were present but `null`, so scoped usage should come from
-  `limits[]`, not from one-off top-level bucket fields.
-  Every other active `weekly_scoped` model entry parses into a dropdown-only
-  row with its own reset time and countdown; it draws nothing on the dial, so
-  no active scoped usage is silently hidden. Duplicate scope identities keep
-  the first payload occurrence, and entries without a model identity are
-  skipped rather than guessed.
-- **Read-only.** Alight never refreshes or rewrites the Keychain item, so it cannot invalidate the refresh token the Claude Code app depends on. Near expiry Alight asks the `claude` CLI to renew its own login, timing that poll to the token's expiry rather than the five-minute cadence. An expired token that still has a refresh token is reported as `renewing Claude Code login…` (no sign-in prompt) for a ten-minute grace period while renewal retries once a minute; only after that, or when no refresh token remains, does the menu offer **Sign in**. An HTTP 401 with a refreshable login triggers one renewal-and-retry before it is treated as a credential failure.
-- **Gentle polling.** The usage endpoint rate-limits aggressively, so Claude is polled on a five-minute cadence with exponential backoff on failure, decoupled from Codex's 60s loop. Manual Refresh forces a live Claude attempt. HTTP `429` responses use Anthropic's `Retry-After` header instead of the generic backoff, and scheduled/manual refreshes share one in-flight task.
+- Run Claude Code's own headless usage command, directly and without a shell:
+  `claude -p /usage --output-format json --no-session-persistence`. `/usage`
+  is a local command: Claude Code answers it without a model turn
+  (`num_turns` 0, cost 0, about a second) and owns its login, token renewal,
+  and endpoint. Alight reads no Claude credentials and sends no request to
+  Anthropic itself. `--no-session-persistence` keeps each poll from saving a
+  session transcript.
+- Find the CLI at `ALIGHT_CLAUDE_BIN`, else the first executable of
+  `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`,
+  `~/.claude/local/claude`.
+- Run it with stdin on `/dev/null`, Alight's Application Support folder as the
+  working directory, a 30-second deadline (then TERM and KILL of its whole
+  process group), bounded stdout/stderr, and a minimal environment: `HOME`,
+  `USER`, `PATH=/usr/bin:/bin:<CLI folder>`, `LANG=en_US.UTF-8` (reset dates
+  always in English), and `DISABLE_AUTOUPDATER=1`. Nothing from Alight's own
+  environment is forwarded, so `CLAUDE_CODE_OAUTH_TOKEN` or
+  `ANTHROPIC_API_KEY` cannot switch the CLI to another login.
+- Accept the JSON only when `type` is `result`, `num_turns` is `0` (and cost
+  is zero), `subtype` is `success`, and `local_command` is `usage`. A model
+  turn is refused, and scheduled Claude polls stop until a manual Refresh, so
+  a CLI that ever treats `/usage` as a prompt cannot spend inference each poll.
+- Parse the result text: `Current session` → fast 5h window; `Current week
+  (all models)` → slow weekly window; `Current week (<Model>)` → a scoped
+  weekly window. Fable keeps the four-pointed star on the dial's outer edge;
+  every other model is a dropdown-only row, so no active scoped usage is
+  silently hidden. Percent is `N% used` (or `N% left`); the reset is read in
+  the IANA zone named in parentheses (`resets Oct 8 at 2pm
+  (America/Guayaquil)`, with or without minutes, 24-hour times, time-only,
+  or `resets in 3h 12m`). A date without a year takes the year closest to now,
+  so December reads `Jan 2` as next year.
+- A plan may have no weekly limit (a Team seat shows only `Current session`
+  plus model-scoped weeks). The command prints every limit the plan has, so a
+  reading with at least one broad window is complete.
+- Unknown or unparseable output, a recognized line that cannot be read, a
+  timeout, or a failing CLI is an explicit failure with a short reason, never
+  a guessed number. A signed-out CLI (`auth status` `loggedIn: false`, or a
+  `/login` prompt) asks for **Sign in**.
+- **Account binding.** Before `/usage`, `claude auth status --json` identifies
+  the account. Only a domain-separated SHA-256 of its email and organization
+  (plus the plan name, such as `team`) is kept, never the raw email. That
+  identity is the reading's `observationIdentity`, so usage history and
+  forecasts can join Claude readings for one account.
+- **Gentle polling.** Scheduled Claude polls run at most every three minutes;
+  after failures the wait doubles up to fifteen minutes. Manual Refresh forces
+  a poll. Scheduled and manual refreshes share one in-flight task and the
+  process runner is serial, so two `claude` processes never run at once.
 
 ### Antigravity
 
@@ -152,8 +180,12 @@ Percentages are shown as percentage points of pressure unless otherwise labeled.
 - A live failure does not erase still-valid last-known hands. The dropdown shows
   cache age, current error, and the auth action together.
 - Recompute cached pressure against the current clock on every refresh.
-- Retire each cached hand at its own reset timestamp instead of using an
-  arbitrary provider-wide TTL.
+- Retire each cached hand at its own reset timestamp, and never show a cached
+  reading more than six hours old.
+- Claude readings are bound to their account: a poll whose account is
+  different or unknown (including signed out) drops the cached Claude
+  reading, an unidentified live reading is shown but never cached, and older
+  unbound Claude entries are ignored on load.
 - Claude Desktop private history/cookies are not a fallback source. Its sampled
   history can omit reset times, and its web session is not a supported third-
   party credential surface.
@@ -172,14 +204,12 @@ Automatic sources are intentionally primary. Manual input exists only as a resil
 ## Safety
 
 - Never print or cache any provider auth token.
-- Never write back to the Claude Code Keychain item (read-only credential access).
+- Never read Claude Code's credentials; Claude Code owns its own login.
 - Cache only derived usage windows and freshness metadata.
 - Treat endpoint failures as degraded telemetry, not as zero usage.
 - Prefer reset-bounded, stale-but-labeled data over a scary blank state.
 - Show credential failures and cached hands together; never disguise cached data
   as a live success.
-- Retry credential failures quickly so a refreshed Claude Code Keychain item is
-  picked up without waiting for the generic network backoff.
 
 ## Non-Goals
 
@@ -245,7 +275,10 @@ Automatic sources are intentionally primary. Manual input exists only as a resil
 
 - Should thresholds be configurable per user?
 - Should reset times be displayed as wall-clock time, duration, or both?
-- Decided against Keychain write-back auto-refresh: updating the item via the `security` CLI can reset its ACL and lock Claude Code out of its own credential (this is why Astra stays read-only). The always-live path is instead a long-lived token from `claude setup-token` placed in the env/token-file.
-- Additional active Anthropic `limits[]` entries beyond Fable currently render
-  as dropdown-only rows with no dial marker. Whether any of them need their own
-  marker styles remains undecided.
+- Decided (2026-10-08): read Claude usage only through Claude Code's own
+  `/usage` command. Calling `api.anthropic.com/api/oauth/usage` with Claude
+  Code's token is no longer workable (it answers HTTP 429 to other clients),
+  and presenting Alight as Claude Code was rejected as impersonation.
+- Model-scoped weekly limits beyond Fable currently render as dropdown-only
+  rows with no dial marker. Whether any of them need their own marker styles
+  remains undecided.
