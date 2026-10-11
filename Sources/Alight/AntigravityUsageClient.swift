@@ -11,42 +11,15 @@ import Foundation
 ///    `~/.gemini/jetski-standalone-oauth-token`, `~/.gemini/oauth_creds.json`).
 /// 4. macOS Keychain item: `gemini` (base64-encoded `go-keyring-base64` JSON blob).
 ///
-/// If an access token has expired and a refresh token is present, token renewal
-/// is executed in-memory against Google's OAuth endpoint without writing back
-/// to Keychain or local files.
+/// Alight only *reads* the access token the `agy` CLI maintains. It never
+/// refreshes a token itself: refreshing needs an OAuth client identity, and the
+/// only client that works is Google's own for `agy`, which is not ours to embed
+/// or impersonate. An expired or missing token is reported as
+/// `AntigravityError.tokenExpired` / `.notSignedIn`, the menu keeps offering
+/// "Sign in to Antigravity…" (which launches `agy`), and no usage or reset
+/// values are invented. Refresh tokens are never read or stored.
 struct AntigravityUsageClient: Sendable {
   private static let keychainService = "gemini"
-
-  private static func unmask(_ bytes: [UInt8], key: UInt8 = 0x5C) -> String {
-    let unmasked = bytes.map { $0 ^ key }
-    return String(decoding: unmasked, as: UTF8.self)
-  }
-
-  private static let googleOAuthClientId: String = {
-    if let env = ProcessInfo.processInfo.environment["ANTIGRAVITY_OAUTH_CLIENT_ID"], !env.isEmpty {
-      return env
-    }
-    let masked: [UInt8] = [
-      0x6d, 0x6c, 0x6b, 0x6d, 0x6c, 0x6c, 0x6a, 0x6c, 0x6a, 0x6c, 0x69, 0x65, 0x6d, 0x71, 0x28, 0x31,
-      0x34, 0x2f, 0x2f, 0x35, 0x32, 0x6e, 0x34, 0x6e, 0x6d, 0x30, 0x3f, 0x2e, 0x39, 0x6e, 0x6f, 0x69,
-      0x2a, 0x28, 0x33, 0x30, 0x33, 0x36, 0x34, 0x68, 0x3b, 0x68, 0x6c, 0x6f, 0x39, 0x2c, 0x72, 0x3d,
-      0x2c, 0x2c, 0x2f, 0x72, 0x3b, 0x33, 0x33, 0x3b, 0x30, 0x39, 0x29, 0x2f, 0x39, 0x2e, 0x3f, 0x33,
-      0x32, 0x28, 0x39, 0x32, 0x28, 0x72, 0x3f, 0x33, 0x31
-    ]
-    return unmask(masked)
-  }()
-
-  private static let googleOAuthClientSecret: String = {
-    if let env = ProcessInfo.processInfo.environment["ANTIGRAVITY_OAUTH_CLIENT_SECRET"], !env.isEmpty {
-      return env
-    }
-    let masked: [UInt8] = [
-      0x1b, 0x13, 0x1f, 0x0f, 0x0c, 0x04, 0x71, 0x17, 0x69, 0x64, 0x1a, 0x0b, 0x0e, 0x68, 0x64, 0x6a,
-      0x10, 0x38, 0x10, 0x16, 0x6d, 0x31, 0x10, 0x1e, 0x64, 0x2f, 0x04, 0x1f, 0x68, 0x26, 0x6a, 0x2d,
-      0x18, 0x1d, 0x3a
-    ]
-    return unmask(masked)
-  }()
 
   private static let session: URLSession = {
     let configuration = URLSessionConfiguration.ephemeral
@@ -69,7 +42,7 @@ struct AntigravityUsageClient: Sendable {
   func result(now: Date = Date()) async -> ProviderResult {
     let credential: AntigravityCredential
     do {
-      credential = try await loadCredential(now: now)
+      credential = try loadCredential(now: now)
     } catch {
       let needsAuth: Bool
       if case AntigravityError.notSignedIn = error {
@@ -151,26 +124,22 @@ struct AntigravityUsageClient: Sendable {
 
   // MARK: - Credentials
 
-  private func loadCredential(now: Date) async throws -> AntigravityCredential {
+  private func loadCredential(now: Date) throws -> AntigravityCredential {
     #if os(macOS)
-    return try await Self.resolveCredential(
+    return try Self.resolveCredential(
       environment: ProcessInfo.processInfo.environment,
       homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
       readFile: { try? String(contentsOfFile: $0, encoding: .utf8) },
       readKeychain: { try securityBlob() },
-      now: now,
-      refreshTokenHandler: { refreshToken in
-        try await Self.refreshGoogleOAuthToken(refreshToken: refreshToken)
-      }
+      now: now
     )
     #else
-    return try await Self.resolveCredential(
+    return try Self.resolveCredential(
       environment: ProcessInfo.processInfo.environment,
       homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
       readFile: { try? String(contentsOfFile: $0, encoding: .utf8) },
       readKeychain: { throw AntigravityError.notSignedIn },
-      now: now,
-      refreshTokenHandler: nil
+      now: now
     )
     #endif
   }
@@ -180,15 +149,14 @@ struct AntigravityUsageClient: Sendable {
     homeDirectory: URL,
     readFile: (String) -> String?,
     readKeychain: () throws -> String,
-    now: Date = Date(),
-    refreshTokenHandler: ((String) async throws -> AntigravityCredential)? = nil
-  ) async throws -> AntigravityCredential {
+    now: Date = Date()
+  ) throws -> AntigravityCredential {
     // 1) Explicit env var (highest precedence).
     for envVar in ["ANTIGRAVITY_OAUTH_TOKEN", "ANTIGRAVITY_TOKEN", "GEMINI_CLI_OAUTH_TOKEN"] {
       if let envToken = environment[envVar]?.trimmingCharacters(in: .whitespacesAndNewlines),
         !envToken.isEmpty
       {
-        return AntigravityCredential(accessToken: envToken, expiresAt: nil, refreshToken: nil)
+        return AntigravityCredential(accessToken: envToken, expiresAt: nil)
       }
     }
 
@@ -200,7 +168,7 @@ struct AntigravityUsageClient: Sendable {
       tokenFilePath = homeDirectory.appending(path: ".alight/antigravity-token").path
     }
     if let contents = readFile(tokenFilePath), let token = firstToken(in: contents) {
-      return AntigravityCredential(accessToken: token, expiresAt: nil, refreshToken: nil)
+      return AntigravityCredential(accessToken: token, expiresAt: nil)
     }
 
     // 3) Local Antigravity / Gemini CLI token files.
@@ -209,17 +177,15 @@ struct AntigravityUsageClient: Sendable {
       homeDirectory.appending(path: ".gemini/jetski-standalone-oauth-token").path,
       homeDirectory.appending(path: ".gemini/oauth_creds.json").path
     ]
+    // An expired token is skipped, not refreshed: a later source may hold a
+    // current one that `agy` maintains. If none does, the session is expired.
+    var sawExpiredToken = false
     for filePath in candidateFiles {
       if let contents = readFile(filePath),
         let cred = parseTokenJSON(contents)
       {
         if let expiresAt = cred.expiresAt, expiresAt <= now {
-          if let refreshToken = cred.refreshToken, let handler = refreshTokenHandler {
-            if let refreshed = try? await handler(refreshToken) {
-              return refreshed
-            }
-          }
-          // Expired and cannot refresh: continue checking other candidates
+          sawExpiredToken = true
           continue
         }
         return cred
@@ -227,14 +193,17 @@ struct AntigravityUsageClient: Sendable {
     }
 
     // 4) macOS Keychain item ("gemini")
-    let keychainBlob = try readKeychain()
+    let keychainBlob: String
+    do {
+      keychainBlob = try readKeychain()
+    } catch {
+      // Expired file credentials are a stronger signal than "no keychain item".
+      throw sawExpiredToken ? AntigravityError.tokenExpired : error
+    }
     guard let cred = parseKeychainBlob(keychainBlob) else {
-      throw AntigravityError.malformed
+      throw sawExpiredToken ? AntigravityError.tokenExpired : AntigravityError.malformed
     }
     if let expiresAt = cred.expiresAt, expiresAt <= now {
-      if let refreshToken = cred.refreshToken, let handler = refreshTokenHandler {
-        return try await handler(refreshToken)
-      }
       throw AntigravityError.tokenExpired
     }
     return cred
@@ -265,8 +234,9 @@ struct AntigravityUsageClient: Sendable {
     }
 
     // Two possible JSON shapes:
-    // Shape A (antigravity-oauth-token / keyring): {"token": {"access_token": "...", "expiry": "...", "refresh_token": "..."}}
-    // Shape B (oauth_creds.json): {"access_token": "...", "expiry_date": 1234567890, "refresh_token": "..."}
+    // Shape A (antigravity-oauth-token / keyring): {"token": {"access_token": "...", "expiry": "..."}}
+    // Shape B (oauth_creds.json): {"access_token": "...", "expiry_date": 1234567890}
+    // Any refresh_token field is deliberately ignored; Alight never refreshes.
     let tokenDict = (root["token"] as? [String: Any]) ?? root
     guard let accessToken = (tokenDict["access_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
       !accessToken.isEmpty
@@ -274,7 +244,6 @@ struct AntigravityUsageClient: Sendable {
       return nil
     }
 
-    let refreshToken = (tokenDict["refresh_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
     var expiresAt: Date? = nil
 
     if let expiryStr = tokenDict["expiry"] as? String {
@@ -285,39 +254,7 @@ struct AntigravityUsageClient: Sendable {
 
     return AntigravityCredential(
       accessToken: accessToken,
-      expiresAt: expiresAt,
-      refreshToken: refreshToken
-    )
-  }
-
-  static func refreshGoogleOAuthToken(refreshToken: String) async throws -> AntigravityCredential {
-    var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
-    request.httpMethod = "POST"
-    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-    let bodyParams = [
-      "client_id=\(googleOAuthClientId)",
-      "client_secret=\(googleOAuthClientSecret)",
-      "refresh_token=\(refreshToken.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? refreshToken)",
-      "grant_type=refresh_token"
-    ].joined(separator: "&")
-    request.httpBody = Data(bodyParams.utf8)
-
-    let (data, response) = try await Self.session.data(for: request)
-    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-      throw AntigravityError.tokenExpired
-    }
-    guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let newAccessToken = json["access_token"] as? String,
-      !newAccessToken.isEmpty
-    else {
-      throw AntigravityError.tokenExpired
-    }
-
-    let expiresIn = (json["expires_in"] as? Double) ?? 3600
-    return AntigravityCredential(
-      accessToken: newAccessToken,
-      expiresAt: Date().addingTimeInterval(expiresIn),
-      refreshToken: refreshToken
+      expiresAt: expiresAt
     )
   }
 
@@ -362,10 +299,10 @@ struct AntigravityUsageClient: Sendable {
     case AntigravityError.notSignedIn:
       return "not signed in to Antigravity"
     case AntigravityError.tokenExpired:
-      return "token expired — sign in to refresh"
+      return "session expired — run `agy` to refresh"
     case let AntigravityError.fetchFailed(code?, retryAfter):
       if code == 401 {
-        return "token rejected — open Antigravity to refresh"
+        return "session expired — run `agy` to refresh"
       }
       if code == 429, let retryAfter {
         return "usage fetch rate-limited; retry after \(ProviderResult.compactDuration(retryAfter))"
@@ -411,7 +348,6 @@ struct AntigravityUsageClient: Sendable {
 struct AntigravityCredential: Sendable {
   let accessToken: String
   let expiresAt: Date?
-  let refreshToken: String?
 }
 
 enum AntigravityError: Error {
