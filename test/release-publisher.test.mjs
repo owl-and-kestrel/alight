@@ -6,12 +6,15 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { buildBridgePayload, signManifestPayload } from "../scripts/release-manifest.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 
-async function bridgeFixture(directory, { mutate = (value) => value } = {}) {
+const sourceCommit = "4bc7afebc8ccaaa02c26d404b7ec1f724951e41d";
+
+async function bridgeFixture(directory, { mutate = (value) => value, signingKey = null } = {}) {
   const bridgeDir = path.join(directory, "bridge");
   await mkdir(bridgeDir, { recursive: true });
   const zip = Buffer.from("bridge fixture wrapping Glideslope.app", "utf8");
@@ -19,17 +22,17 @@ async function bridgeFixture(directory, { mutate = (value) => value } = {}) {
   const artifactURL = `https://updates.owlandkestrel.com/glideslope/releases/v${pkg.version}/${zipSha}/Glideslope.zip`;
   const appcast = Buffer.from(`<?xml version="1.0"?><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:shortVersionString>${pkg.version}</sparkle:shortVersionString><sparkle:version>${pkg.build}</sparkle:version><enclosure url="${artifactURL}" length="${zip.length}" sparkle:edSignature="fixture-signature" /></item></channel></rss>`, "utf8");
   const appcastSha = createHash("sha256").update(appcast).digest("hex");
-  const manifest = mutate({
-    schema: "ok.product-bridge.v1", appId: "alight", legacyAppId: "glideslope",
-    hostBundleId: "com.owlandkestrel.glideslope", bundleId: "com.owlandkestrel.alight",
-    version: pkg.version, build: pkg.build, channel: "stable",
-    legacyFeed: { format: "sparkle.appcast.v2", url: "https://updates.owlandkestrel.com/glideslope/stable/appcast.xml", sha256: appcastSha },
-    targetFeedUrl: "https://updates.owlandkestrel.com/alight/stable/appcast.xml",
-    artifacts: [{ platform: "macos", archiveAppName: "Glideslope.app", url: artifactURL, sha256: zipSha, sizeBytes: zip.length }]
-  });
+  const manifest = mutate(buildBridgePayload({
+    version: pkg.version, build: pkg.build, channel: "stable", publishedAt: new Date().toISOString().replace(/\.\d+Z$/u, "Z"),
+    downloadPageUrl: "https://owlandkestrel.com/apps/alight",
+    feedUrl: "https://updates.owlandkestrel.com/glideslope/stable/appcast.xml", feedSha256: appcastSha,
+    sourceCommit, sourceDirty: false, buildConfiguration: "release", architectures: "arm64",
+    artifactUrl: artifactURL, artifactSha256: zipSha, artifactSizeBytes: zip.length
+  }));
+  const document = signingKey ? signManifestPayload(manifest, signingKey) : manifest;
   await writeFile(path.join(bridgeDir, "Glideslope.zip"), zip);
   await writeFile(path.join(bridgeDir, "appcast.xml"), appcast);
-  await writeFile(path.join(bridgeDir, "glideslope-bridge.json"), `${JSON.stringify(manifest)}\n`);
+  await writeFile(path.join(bridgeDir, "glideslope-bridge.json"), `${JSON.stringify(document)}\n`);
   return { zipSha };
 }
 
@@ -44,15 +47,16 @@ async function fixture({ dirty = false, signed = false, mutate = (value) => valu
     schema: "ok.product-update.v1", appId: "alight", bundleId: "com.owlandkestrel.alight",
     version: pkg.version, build: pkg.build, channel: "stable", publishedAt: new Date().toISOString(), downloadPageUrl: "https://owlandkestrel.com/apps/alight",
     updateFeed: { format: "sparkle.appcast.v2", url: "https://updates.owlandkestrel.com/alight/stable/appcast.xml", sha256: appcastSha },
-    source: { repository: "https://github.com/owl-and-kestrel/alight.git", commit: "4bc7afebc8ccaaa02c26d404b7ec1f724951e41d", dirty, buildConfiguration: "release" },
-    artifacts: [{ platform: "macos", url: artifactURL, sha256: zipSha, sizeBytes: zip.length }]
+    source: { repository: "https://github.com/owl-and-kestrel/alight.git", commit: sourceCommit, dirty, buildConfiguration: "release" },
+    artifacts: [{ platform: "macos", kind: "archive", url: artifactURL, sha256: zipSha, sizeBytes: zip.length }]
   };
   payload = mutate(structuredClone(payload));
   let document = payload;
   let publicKeyPath = "";
+  let keys = null;
   if (signed) {
     const bytes = Buffer.from(`${JSON.stringify(payload, null, 2)}\n`);
-    const keys = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    keys = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
     document = { schema: "ok.signed-manifest.v1", publisher: { id: "owl-kestrel", domain: "owlandkestrel.com", keyId: "ok-release-p256-v1" },
       signedPayload: bytes.toString("base64url"), signature: { alg: "ECDSA_P256_SHA256_DER", value: sign("sha256", bytes, keys.privateKey).toString("base64url") } };
     publicKeyPath = path.join(directory, "key.pem");
@@ -61,7 +65,7 @@ async function fixture({ dirty = false, signed = false, mutate = (value) => valu
   await writeFile(path.join(directory, "Alight.zip"), zip);
   await writeFile(path.join(directory, "appcast.xml"), appcast);
   await writeFile(path.join(directory, "alight-update.json"), `${JSON.stringify(document)}\n`);
-  return { directory, publicKeyPath };
+  return { directory, publicKeyPath, privateKey: keys?.privateKey ?? null };
 }
 
 async function run(directory, extra = [], env = {}) {
@@ -106,6 +110,9 @@ test("local validation rejects dirty publication and appcast ambiguity before cr
   const mismatch = await fixture({ mutate: (p) => { p.updateFeed.sha256 = "0".repeat(64); return p; } });
   try { await assert.rejects(run(mismatch.directory), /Appcast bytes/u); }
   finally { await rm(mismatch.directory, { recursive: true, force: true }); }
+  const kindless = await fixture({ mutate: (p) => { delete p.artifacts[0].kind; return p; } });
+  try { await assert.rejects(run(kindless.directory), /artifact kind must be archive/u); }
+  finally { await rm(kindless.directory, { recursive: true, force: true }); }
 });
 
 test("signed O+K provenance is verified and tampering is rejected", async () => {
@@ -130,6 +137,7 @@ test("dry-run validates the Glideslope bridge when present and orders it after t
     assert.equal(plan.bridge.artifactKey, `glideslope/releases/v${pkg.version}/${bridge.zipSha}/Glideslope.zip`);
     assert.equal(plan.bridge.appcastKey, "glideslope/stable/appcast.xml");
     assert.equal(plan.bridge.hostBundleId, "com.owlandkestrel.glideslope");
+    assert.equal(plan.bridge.manifestSignatureVerified, false);
     const order = plan.publicationOrder;
     assert.ok(order.indexOf("Nest stage/commit/read back bridge ZIP") > order.indexOf("Nest pointer CAS/read back appcast"));
     assert.ok(order.indexOf("Nest pointer CAS/read back Glideslope appcast") < order.indexOf("publish Release/Trust ledger"));
@@ -139,7 +147,7 @@ test("dry-run validates the Glideslope bridge when present and orders it after t
 test("bridge validation rejects a mismatched host identity or archive", async () => {
   const wrongHost = await fixture();
   try {
-    await bridgeFixture(wrongHost.directory, { mutate: (m) => { m.hostBundleId = "com.owlandkestrel.alight"; return m; } });
+    await bridgeFixture(wrongHost.directory, { mutate: (m) => { m.bundleId = "com.owlandkestrel.alight"; return m; } });
     await assert.rejects(run(wrongHost.directory), /Bridge manifest identity/u);
   } finally { await rm(wrongHost.directory, { recursive: true, force: true }); }
   const wrongBytes = await fixture();
@@ -152,4 +160,22 @@ test("bridge validation rejects a mismatched host identity or archive", async ()
   try {
     assert.equal(JSON.parse((await run(noBridge.directory)).stdout).bridge, null);
   } finally { await rm(noBridge.directory, { recursive: true, force: true }); }
+});
+
+test("signed bridge provenance verifies, and publication refuses an unsigned bridge", async () => {
+  const signed = await fixture({ signed: true });
+  try {
+    await bridgeFixture(signed.directory, { signingKey: signed.privateKey });
+    const { stdout } = await run(signed.directory, [], { OK_RELEASE_PUBLIC_KEY_FILE: signed.publicKeyPath });
+    assert.equal(JSON.parse(stdout).bridge.manifestSignatureVerified, true);
+    const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    await bridgeFixture(signed.directory, { signingKey: other.privateKey });
+    await assert.rejects(run(signed.directory, [], { OK_RELEASE_PUBLIC_KEY_FILE: signed.publicKeyPath }), /signature/iu);
+  } finally { await rm(signed.directory, { recursive: true, force: true }); }
+  const unsignedBridge = await fixture({ signed: true });
+  try {
+    await bridgeFixture(unsignedBridge.directory);
+    await assert.rejects(run(unsignedBridge.directory, ["--publish"], { OK_RELEASE_PUBLIC_KEY_FILE: unsignedBridge.publicKeyPath }),
+      /unsigned bridge manifest/u);
+  } finally { await rm(unsignedBridge.directory, { recursive: true, force: true }); }
 });

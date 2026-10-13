@@ -174,7 +174,8 @@ outputs are:
 dist/release/bridge/Glideslope.zip        # release Alight.app, renamed
 dist/release/bridge/Glideslope.zip.sha256
 dist/release/bridge/appcast.xml           # signed, for /glideslope/stable/
-dist/release/bridge/glideslope-bridge.json
+dist/release/bridge/glideslope-bridge.payload.json
+dist/release/bridge/glideslope-bridge.json  # O+K provenance, signed when keyed
 ```
 
 The bridge archive is the same bytes as the release build (verified with
@@ -185,6 +186,15 @@ Ed25519 key the old apps already trust. Its content-addressed URL is
 advances `/glideslope/stable/appcast.xml` last, exactly like the Alight
 channel. Publish the Alight release first, then the bridge, so a bridged app's
 first check against the Alight feed finds a matching build.
+
+The bridge provenance manifest uses the Glideslope host's update identity
+(`appId: "glideslope"`, `bundleId: "com.owlandkestrel.glideslope"`, the legacy
+feed as `updateFeed`) and the true source of the bytes: the Alight repository
+and the same commit as the Alight manifest. Nest's bridge publisher currently
+admits only the fixed historical bridge (Glideslope 0.5.2 build 12 from commit
+`9df75478`, recorded with the `glideslope.git` source URL), so a bridge packaged
+from a newer Alight build is refused by Nest until that admission and this
+wrapping design are reconciled.
 
 After Sparkle relaunches the bridged app it is Alight (bundle
 `com.owlandkestrel.alight`, `SUFeedURL` on the Alight feed) still living at
@@ -274,11 +284,25 @@ dist/release/alight-update.json
 dist/release/RELEASE_NOTES.txt
 ```
 
-When `OK_RELEASE_PRIVATE_KEY_PEM` is set, packaging also wraps the provenance
-payload as `ok.signed-manifest.v1` using the canonical O+K signer. Without it,
-the provenance manifest is an unsigned local preview; that does not weaken the
-separate Sparkle signature, but stable Trust publication should still require
-the O+K provenance signature.
+Both provenance payloads (Alight and the bridge) are `ok.product-update.v1`
+documents built by `scripts/release-manifest.mjs`, with exactly one macOS
+artifact of `kind: "archive"` — the field set Nest's release-origin publisher
+verifies. To sign them as `ok.signed-manifest.v1` (key id
+`ok-release-p256-v1`), point packaging at the owner-only P-256 key file:
+
+```sh
+OK_RELEASE_PRIVATE_KEY_FILE=/absolute/path/to/ok-release-p256-v1.pem \
+  npm run package:release
+```
+
+Node reads the file itself, so the key never enters an environment variable.
+It refuses a relative path, a symbolic link, a non-regular file, a file owned by
+another user, or any group/other permission (use mode `0600`). The legacy
+`OK_RELEASE_PRIVATE_KEY_PEM` inline variable still works but is deprecated;
+setting both is an error. With neither, each manifest is an unsigned local
+preview copy of its payload; that does not weaken the separate Sparkle
+signature, but Nest's release-origin publisher and stable Trust publication
+require the O+K provenance signature.
 
 ## Publish The Release
 
@@ -346,7 +370,9 @@ Before publication:
 
 - Confirm version `0.6.1`, build `14`, source commit, and intended clean tree.
 - Confirm `dist/release/bridge/` exists and its `glideslope-bridge.json` names
-  the same version and build as the Alight manifest.
+  the same version, build, and source commit as the Alight manifest, and that
+  both manifests are signed (`release:dry-run` reports
+  `manifestSignatureVerified` for each).
 - Confirm `codesign --verify --deep --strict dist/Alight.app` succeeds.
 - Confirm the packaged feed and archive signatures verify.
 - Install the ZIP on a separate Mac and test launch, usage-cache recovery,

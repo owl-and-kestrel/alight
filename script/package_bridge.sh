@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Packages the Glideslope → Alight bridge: the already-built release Alight.app
 # re-wrapped as `Glideslope.app` inside `Glideslope.zip`, plus a signed appcast
-# for the historical Glideslope feed.
+# for the historical Glideslope feed, and its O+K provenance manifest
+# (`ok.product-update.v1` for the Glideslope host identity, signed into
+# `ok.signed-manifest.v1` when an O+K release key is configured).
 #
 # Why this shape: Sparkle installs an update into the host's existing path and
 # finds the app inside the archive by the host's file name (or, failing that,
@@ -24,6 +26,7 @@ ZIP_PATH="$BRIDGE_DIR/$LEGACY_APP_NAME.zip"
 CHECKSUM_PATH="$ZIP_PATH.sha256"
 APPCAST_PATH="$BRIDGE_DIR/appcast.xml"
 NOTES_PATH="$BRIDGE_DIR/$LEGACY_APP_NAME.md"
+PAYLOAD_PATH="$BRIDGE_DIR/glideslope-bridge.payload.json"
 MANIFEST_PATH="$BRIDGE_DIR/glideslope-bridge.json"
 RELEASE_CHANNEL="${ALIGHT_RELEASE_CHANNEL:-stable}"
 DOWNLOAD_PAGE_URL="${ALIGHT_DOWNLOAD_PAGE_URL:-https://owlandkestrel.com/apps/alight}"
@@ -32,6 +35,7 @@ LEGACY_FEED_URL="${ALIGHT_BRIDGE_FEED_URL:-$UPDATE_ORIGIN/glideslope/$RELEASE_CH
 SPARKLE_PRIVATE_KEY_FILE="${ALIGHT_SPARKLE_PRIVATE_KEY_FILE:-/Users/jon/.config/owl-kestrel/secrets/sparkle-ed25519-private-key}"
 SPARKLE_GENERATE_APPCAST="$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
 SPARKLE_SIGN_UPDATE="$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+RELEASE_MANIFEST_TOOL="$ROOT/scripts/release-manifest.mjs"
 
 if [[ $# -ne 0 ]]; then
   echo "usage: $0" >&2
@@ -46,7 +50,12 @@ VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$APP_BU
 BUILD_NUMBER="$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$APP_BUNDLE/Contents/Info.plist")"
 BUNDLE_ID="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$APP_BUNDLE/Contents/Info.plist")"
 BUILD_CONFIGURATION="$(/usr/bin/plutil -extract AlightBuildConfiguration raw -o - "$APP_BUNDLE/Contents/Info.plist")"
-SPARKLE_FEED_URL="$(/usr/bin/plutil -extract SUFeedURL raw -o - "$APP_BUNDLE/Contents/Info.plist")"
+MIN_SYSTEM_VERSION="$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - "$APP_BUNDLE/Contents/Info.plist")"
+ARCHITECTURES="$(/usr/bin/lipo -archs "$APP_BUNDLE/Contents/MacOS/Alight")"
+SPARKLE_PUBLIC_KEY="$(/usr/bin/plutil -extract SUPublicEDKey raw -o - "$APP_BUNDLE/Contents/Info.plist")"
+SOURCE_COMMIT="$(/usr/bin/plutil -extract AlightSourceCommit raw -o - "$APP_BUNDLE/Contents/Info.plist")"
+SOURCE_DIRTY="$(/usr/bin/plutil -extract AlightSourceDirty raw -o - "$APP_BUNDLE/Contents/Info.plist")"
+PUBLISHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 if [[ "$BUILD_CONFIGURATION" != "release" ]]; then
   echo "Refusing to bridge a non-release Alight bundle." >&2
   exit 1
@@ -115,40 +124,34 @@ fi
 "$SPARKLE_SIGN_UPDATE" --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" --verify "$APPCAST_PATH"
 APPCAST_SHA256="$(shasum -a 256 "$APPCAST_PATH" | awk '{print $1}')"
 
-# Non-secret description of the bridge for the publisher and for review.
+# Provenance for the Glideslope host: the update identity is the old app and
+# feed Sparkle updates in place; the source is the Alight commit that built
+# these bytes. The field set is Nest's release-origin manifest contract.
 ALIGHT_VERSION="$VERSION" \
 ALIGHT_BUILD_NUMBER="$BUILD_NUMBER" \
+ALIGHT_MIN_SYSTEM_VERSION="$MIN_SYSTEM_VERSION" \
+ALIGHT_ARCHITECTURES="$ARCHITECTURES" \
+ALIGHT_PUBLISHED_AT="$PUBLISHED_AT" \
 ALIGHT_RELEASE_CHANNEL="$RELEASE_CHANNEL" \
+ALIGHT_RELEASE_NOTES="" \
 ALIGHT_ARTIFACT_URL="$ARTIFACT_URL" \
 ALIGHT_ARTIFACT_SHA256="$ZIP_SHA256" \
 ALIGHT_ARTIFACT_SIZE_BYTES="$ZIP_SIZE_BYTES" \
-ALIGHT_LEGACY_FEED_URL="$LEGACY_FEED_URL" \
+ALIGHT_APPCAST_URL="$LEGACY_FEED_URL" \
 ALIGHT_APPCAST_SHA256="$APPCAST_SHA256" \
-ALIGHT_TARGET_FEED_URL="$SPARKLE_FEED_URL" \
-node <<'NODE' > "$MANIFEST_PATH"
-const payload = {
-  schema: "ok.product-bridge.v1",
-  appId: "alight",
-  legacyAppId: "glideslope",
-  hostBundleId: "com.owlandkestrel.glideslope",
-  bundleId: "com.owlandkestrel.alight",
-  version: process.env.ALIGHT_VERSION,
-  build: Number(process.env.ALIGHT_BUILD_NUMBER),
-  channel: process.env.ALIGHT_RELEASE_CHANNEL,
-  legacyFeed: { format: "sparkle.appcast.v2", url: process.env.ALIGHT_LEGACY_FEED_URL, sha256: process.env.ALIGHT_APPCAST_SHA256 },
-  targetFeedUrl: process.env.ALIGHT_TARGET_FEED_URL,
-  artifacts: [{
-    platform: "macos",
-    archiveAppName: "Glideslope.app",
-    url: process.env.ALIGHT_ARTIFACT_URL,
-    sha256: process.env.ALIGHT_ARTIFACT_SHA256,
-    sizeBytes: Number(process.env.ALIGHT_ARTIFACT_SIZE_BYTES)
-  }]
-};
-process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-NODE
+ALIGHT_SPARKLE_PUBLIC_KEY="$SPARKLE_PUBLIC_KEY" \
+ALIGHT_DOWNLOAD_PAGE_URL="$DOWNLOAD_PAGE_URL" \
+ALIGHT_SOURCE_COMMIT="$SOURCE_COMMIT" \
+ALIGHT_SOURCE_DIRTY="$SOURCE_DIRTY" \
+ALIGHT_SOURCE_BUILD_CONFIGURATION="$BUILD_CONFIGURATION" \
+node "$RELEASE_MANIFEST_TOOL" payload bridge > "$PAYLOAD_PATH"
+
+# Same key handling as package_release.sh: OK_RELEASE_PRIVATE_KEY_FILE or the
+# legacy OK_RELEASE_PRIVATE_KEY_PEM signs; neither leaves an unsigned preview.
+node "$RELEASE_MANIFEST_TOOL" sign "$PAYLOAD_PATH" "$MANIFEST_PATH"
 
 echo "Created $ZIP_PATH"
 echo "Wrote $CHECKSUM_PATH"
 echo "Wrote $APPCAST_PATH"
+echo "Wrote $PAYLOAD_PATH"
 echo "Wrote $MANIFEST_PATH"

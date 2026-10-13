@@ -14,7 +14,7 @@ SPARKLE_RELEASE_NOTES_PATH="$DIST_DIR/Alight.md"
 RELEASE_CHANNEL="${ALIGHT_RELEASE_CHANNEL:-stable}"
 DOWNLOAD_PAGE_URL="${ALIGHT_DOWNLOAD_PAGE_URL:-https://owlandkestrel.com/apps/alight}"
 RELEASE_NOTES="${ALIGHT_RELEASE_NOTES:-Usage reliability and update-channel improvements.}"
-OK_RELEASE_SIGNER="${OK_RELEASE_SIGNER:-/Users/jon/Projects/utilities/ok-release-tools/scripts/sign-manifest.mjs}"
+RELEASE_MANIFEST_TOOL="$ROOT/scripts/release-manifest.mjs"
 SPARKLE_PRIVATE_KEY_FILE="${ALIGHT_SPARKLE_PRIVATE_KEY_FILE:-/Users/jon/.config/owl-kestrel/secrets/sparkle-ed25519-private-key}"
 SPARKLE_GENERATE_APPCAST="$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
 SPARKLE_SIGN_UPDATE="$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update"
@@ -161,56 +161,12 @@ ALIGHT_DOWNLOAD_PAGE_URL="$DOWNLOAD_PAGE_URL" \
 ALIGHT_SOURCE_COMMIT="$SOURCE_COMMIT" \
 ALIGHT_SOURCE_DIRTY="$SOURCE_DIRTY" \
 ALIGHT_SOURCE_BUILD_CONFIGURATION="$BUILD_CONFIGURATION" \
-node <<'NODE' > "$PAYLOAD_PATH"
-const payload = {
-  schema: "ok.product-update.v1",
-  appId: "alight",
-  bundleId: "com.owlandkestrel.alight",
-  version: process.env.ALIGHT_VERSION,
-  build: Number(process.env.ALIGHT_BUILD_NUMBER),
-  channel: process.env.ALIGHT_RELEASE_CHANNEL,
-  minimumSystemVersion: process.env.ALIGHT_MIN_SYSTEM_VERSION,
-  publishedAt: process.env.ALIGHT_PUBLISHED_AT,
-  releaseNotes: process.env.ALIGHT_RELEASE_NOTES,
-  downloadPageUrl: process.env.ALIGHT_DOWNLOAD_PAGE_URL,
-  updateFeed: {
-    format: "sparkle.appcast.v2",
-    url: process.env.ALIGHT_APPCAST_URL,
-    sha256: process.env.ALIGHT_APPCAST_SHA256,
-    publicKey: process.env.ALIGHT_SPARKLE_PUBLIC_KEY,
-    automaticByDefault: true
-  },
-  source: {
-    repository: "https://github.com/owl-and-kestrel/alight.git",
-    commit: process.env.ALIGHT_SOURCE_COMMIT,
-    dirty: process.env.ALIGHT_SOURCE_DIRTY === "true",
-    buildConfiguration: process.env.ALIGHT_SOURCE_BUILD_CONFIGURATION
-  },
-  artifacts: [{
-    platform: "macos",
-    architectures: process.env.ALIGHT_ARCHITECTURES.split(/\s+/u).filter(Boolean),
-    url: process.env.ALIGHT_ARTIFACT_URL,
-    sha256: process.env.ALIGHT_ARTIFACT_SHA256,
-    sizeBytes: Number(process.env.ALIGHT_ARTIFACT_SIZE_BYTES)
-  }]
-};
+node "$RELEASE_MANIFEST_TOOL" payload alight > "$PAYLOAD_PATH"
 
-process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-NODE
-
-if [[ -n "${OK_RELEASE_PRIVATE_KEY_PEM:-}" ]]; then
-  if [[ ! -f "$OK_RELEASE_SIGNER" ]]; then
-    echo "O+K release signer not found: $OK_RELEASE_SIGNER" >&2
-    exit 1
-  fi
-  OK_RELEASE_PUBLISHER_ID="${OK_RELEASE_PUBLISHER_ID:-owl-kestrel}" \
-  OK_RELEASE_PUBLISHER_NAME="${OK_RELEASE_PUBLISHER_NAME:-Owl & Kestrel}" \
-  OK_RELEASE_PUBLISHER_DOMAIN="${OK_RELEASE_PUBLISHER_DOMAIN:-owlandkestrel.com}" \
-  OK_RELEASE_KEY_ID="${OK_RELEASE_KEY_ID:-ok-release-p256-v1}" \
-  node "$OK_RELEASE_SIGNER" "$PAYLOAD_PATH" "$MANIFEST_PATH"
-else
-  cp "$PAYLOAD_PATH" "$MANIFEST_PATH"
-fi
+# Signs with OK_RELEASE_PRIVATE_KEY_FILE (an owner-only 0600 PEM file; the key
+# never enters the environment) or the legacy OK_RELEASE_PRIVATE_KEY_PEM. With
+# neither, the manifest is an unsigned preview copy of the payload.
+node "$RELEASE_MANIFEST_TOOL" sign "$PAYLOAD_PATH" "$MANIFEST_PATH"
 
 echo "Created $ZIP_PATH"
 echo "Wrote $CHECKSUM_PATH"
