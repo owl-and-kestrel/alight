@@ -1,7 +1,7 @@
 {
   "name": "alight",
-  "version": "0.6.0",
-  "build": 13,
+  "version": "0.6.1",
+  "build": 14,
   "description": "A tiny native macOS menu bar gauge for Codex, Claude Code, and Antigravity usage pressure.",
   "type": "module",
   "license": "MIT",

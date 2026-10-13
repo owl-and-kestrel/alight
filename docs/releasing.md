@@ -7,8 +7,8 @@ installed app's update-fetch or verification path.
 
 Current release identity:
 
-- app version: `0.6.0`
-- build: `13`
+- app version: `0.6.1`
+- build: `14`
 - product/app id: `alight`
 - bundle identifier: `com.owlandkestrel.alight`
 - update channel: `stable`
@@ -344,7 +344,7 @@ failure remains safe.
 
 Before publication:
 
-- Confirm version `0.6.0`, build `13`, source commit, and intended clean tree.
+- Confirm version `0.6.1`, build `14`, source commit, and intended clean tree.
 - Confirm `dist/release/bridge/` exists and its `glideslope-bridge.json` names
   the same version and build as the Alight manifest.
 - Confirm `codesign --verify --deep --strict dist/Alight.app` succeeds.
