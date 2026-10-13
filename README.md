@@ -152,7 +152,7 @@ shared exact-name certificate renews through Certbot. Every HTTP and HTTPS path
 returns the same permanent redirect to the canonical Apps page. Removing the
 alias never removes the canonical Apps route or Alight release feed.
 
-The technical alpha is ad-hoc signed rather than Developer ID signed/notarized, so its first installation may require **System Settings → Privacy & Security → Open Anyway**. Installed Glideslope apps are not stranded: every Alight release also packages a bridge for the historical Glideslope feed (the same build wrapped as `Glideslope.app`), which Sparkle installs in place; Alight then renames itself to `Alight.app` and continues on its own feed. Pre-Sparkle users need one manual installation. See [`docs/releasing.md`](docs/releasing.md).
+The technical alpha is ad-hoc signed rather than Developer ID signed/notarized, so its first installation may require **System Settings → Privacy & Security → Open Anyway**. Installed Glideslope apps are not stranded: a one-time bridge on the historical Glideslope feed (the Glideslope 0.5.2 rename announcement) tells them Glideslope is now Alight and opens the Alight download page for a manual install. Pre-Sparkle users need the same one manual installation. See [`docs/releasing.md`](docs/releasing.md).
 
 After arriving via the bridge or a fresh install, choose **Import Settings**
 on first launch to bring across the valid native cache and allowlisted

@@ -175,7 +175,9 @@ echo "Wrote $PAYLOAD_PATH"
 echo "Wrote $MANIFEST_PATH"
 echo "Wrote $RELEASE_NOTES_PATH"
 
-# Bridge for installations still on the Glideslope feed (see package_bridge.sh).
-if [[ "${ALIGHT_SKIP_BRIDGE:-0}" != "1" ]]; then
+# The Glideslope bridge is a fixed historical build (see package_bridge.sh) that
+# Nest admits once; its rebuilt bytes would differ, so it is packaged only on
+# request, after this script (which clears dist/release).
+if [[ "${ALIGHT_PACKAGE_BRIDGE:-0}" == "1" ]]; then
   "$ROOT/script/package_bridge.sh"
 fi

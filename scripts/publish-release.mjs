@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseProductUpdateManifest, verifySignedReleaseManifest } from "@owl-kestrel/hatch-contracts";
+import { ALIGHT_SOURCE_REPOSITORY, GLIDESLOPE_BRIDGE } from "./release-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const flags = new Set(process.argv.slice(2));
@@ -37,8 +39,9 @@ const build = Number(packageJSON.build);
 if (!/^\d+(?:\.\d+){1,3}$/u.test(version) || !Number.isSafeInteger(build) || build <= 0) {
   throw new Error("package.json must contain a valid version and positive integer build.");
 }
-const ALIGHT_IDENTITY = { appId: "alight", bundleId: "com.owlandkestrel.alight", artifactPathPrefix: "/alight/" };
-const GLIDESLOPE_BRIDGE_IDENTITY = { appId: "glideslope", bundleId: "com.owlandkestrel.glideslope", artifactPathPrefix: "/glideslope/" };
+const ALIGHT_IDENTITY = { appId: "alight", bundleId: "com.owlandkestrel.alight", artifactPathPrefix: "/alight/", sourceRepository: ALIGHT_SOURCE_REPOSITORY };
+const GLIDESLOPE_BRIDGE_IDENTITY = { appId: "glideslope", bundleId: "com.owlandkestrel.glideslope", artifactPathPrefix: "/glideslope/",
+  sourceRepository: GLIDESLOPE_BRIDGE.sourceRepository };
 const decoded = await decodeAndVerifyManifest(manifestDocument, { channel, identity: ALIGHT_IDENTITY });
 const payload = decoded.payload;
 validateManifest(payload, { version, build, channel, identity: ALIGHT_IDENTITY });
@@ -66,10 +69,11 @@ const expectedFeedPath = `/alight/${channel}/appcast.xml`;
 const feedURL = new URL(payload.updateFeed.url);
 if (feedURL.origin !== updateOrigin.origin || feedURL.pathname !== expectedFeedPath) throw new Error("Update feed URL is not canonical.");
 
-// Optional Glideslope bridge (script/package_bridge.sh): the same build wrapped
-// as Glideslope.app for the historical feed. Validated here so the dry run
-// covers both channels; publication order is Alight first, then the bridge.
-const bridge = await validateBridge(path.join(releaseDir, "bridge"), { version, build, channel, zipSha256, sourceCommit: payload.source.commit });
+// Optional Glideslope bridge (script/package_bridge.sh): the fixed historical
+// Glideslope 0.5.2 (12) announcement build for the old feed. Validated here so
+// the dry run covers both channels; publication order is Alight first, then
+// the bridge.
+const bridge = await validateBridge(path.join(releaseDir, "bridge"), { channel, zipSha256, alightSourceCommit: payload.source.commit });
 if (publish && bridge && !bridge.manifestSignatureVerified && !allowUnsigned) throw new Error("Refusing to publish an unsigned bridge manifest.");
 
 const artifactKey = artifactURL.pathname.slice(1);
@@ -108,7 +112,7 @@ function validateManifest(value, expected) {
   parseProductUpdateManifest(value);
   if (value.schema !== "ok.product-update.v1" || value.appId !== expected.identity.appId || value.bundleId !== expected.identity.bundleId
     || value.version !== expected.version || value.build !== expected.build || value.channel !== expected.channel) throw new Error("Release manifest identity does not match package metadata.");
-  if (!value.source || value.source.repository !== "https://github.com/owl-and-kestrel/alight.git" || !/^[0-9a-f]{40}$/u.test(value.source.commit || "")
+  if (!value.source || value.source.repository !== expected.identity.sourceRepository || !/^[0-9a-f]{40}$/u.test(value.source.commit || "")
     || typeof value.source.dirty !== "boolean" || value.source.buildConfiguration !== "release") throw new Error("Release manifest is missing exact source provenance.");
   if (!value.updateFeed || value.updateFeed.format !== "sparkle.appcast.v2" || !/^[0-9a-f]{64}$/u.test(value.updateFeed.sha256 || "")) throw new Error("Release manifest updateFeed is invalid.");
   // Nest's release-origin publisher admits exactly one macOS archive artifact.
@@ -116,9 +120,10 @@ function validateManifest(value, expected) {
   if (value.artifacts[0].kind !== "archive") throw new Error("Release manifest artifact kind must be archive.");
 }
 
-// The bridge manifest is an ok.product-update.v1 for the Glideslope host
-// identity and legacy feed, signed like the Alight manifest; its source is the
-// same Alight commit as the Alight release.
+// The bridge manifest is an ok.product-update.v1 for the Glideslope identity
+// and legacy feed, signed like the Alight manifest. Its source must be the
+// pinned historical commit, an ancestor of the Alight release commit (the
+// repository was renamed in place, so glideslope.git is its historical name).
 async function validateBridge(directory, expected) {
   const manifestFile = path.join(directory, "glideslope-bridge.json");
   if (!existsSync(manifestFile)) return null;
@@ -130,9 +135,12 @@ async function validateBridge(directory, expected) {
   const document = JSON.parse(await readFile(manifestFile, "utf8"));
   const decodedBridge = await decodeAndVerifyManifest(document, { channel: expected.channel, identity: GLIDESLOPE_BRIDGE_IDENTITY });
   const manifest = decodedBridge.payload;
-  try { validateManifest(manifest, { ...expected, identity: GLIDESLOPE_BRIDGE_IDENTITY }); }
-  catch (error) { throw new Error(`Bridge manifest identity does not match package metadata: ${error.message}`); }
-  if (manifest.source.commit !== expected.sourceCommit) throw new Error("Bridge manifest source commit does not match the Alight release.");
+  const bridgeExpected = { version: GLIDESLOPE_BRIDGE.version, build: GLIDESLOPE_BRIDGE.build, channel: expected.channel, identity: GLIDESLOPE_BRIDGE_IDENTITY };
+  try { validateManifest(manifest, bridgeExpected); }
+  catch (error) { throw new Error(`Bridge manifest identity does not match the admitted bridge: ${error.message}`); }
+  if (manifest.source.commit !== GLIDESLOPE_BRIDGE.sourceCommit) throw new Error("Bridge manifest source commit is not the pinned Glideslope bridge commit.");
+  if (manifest.source.dirty) throw new Error("Bridge manifest must come from a clean source tree.");
+  if (!isAncestorCommit(GLIDESLOPE_BRIDGE.sourceCommit, expected.alightSourceCommit)) throw new Error("Bridge commit is not an ancestor of the Alight release commit.");
   const zip = await readFile(zipFile);
   const appcast = await readFile(appcastFile);
   const bridgeZipSha256 = sha256Bytes(zip);
@@ -142,20 +150,32 @@ async function validateBridge(directory, expected) {
   if (bridgeZipSha256 === expected.zipSha256) throw new Error("Bridge ZIP must be the Glideslope.app wrapping, not the Alight archive.");
   if (manifest.updateFeed.sha256 !== bridgeAppcastSha256) throw new Error("Bridge appcast bytes do not match the bridge manifest.");
   const item = parseAppcast(appcast.toString("utf8"));
-  if (item.version !== expected.version || item.build !== String(expected.build)) throw new Error("Bridge appcast version/build does not match package metadata.");
+  if (item.version !== GLIDESLOPE_BRIDGE.version || item.build !== String(GLIDESLOPE_BRIDGE.build)) throw new Error("Bridge appcast version/build is not the admitted bridge.");
   if (item.url !== artifact.url || item.length !== String(zip.length)) throw new Error("Bridge appcast enclosure does not match the bridge ZIP.");
   if (!item.signature) throw new Error("Bridge appcast enclosure is missing an Ed25519 signature.");
   const bridgeURL = new URL(artifact.url);
-  if (bridgeURL.origin !== updateOrigin.origin || bridgeURL.pathname !== `/glideslope/releases/v${expected.version}/${bridgeZipSha256}/Glideslope.zip`) {
+  if (bridgeURL.origin !== updateOrigin.origin || bridgeURL.pathname !== `/glideslope/releases/v${GLIDESLOPE_BRIDGE.version}/${bridgeZipSha256}/Glideslope.zip`) {
     throw new Error("Bridge artifact URL is not the content-addressed canonical Glideslope release-origin URL.");
   }
   const legacyFeedURL = new URL(manifest.updateFeed.url);
   if (legacyFeedURL.origin !== updateOrigin.origin || legacyFeedURL.pathname !== `/glideslope/${expected.channel}/appcast.xml`) throw new Error("Bridge feed URL is not the canonical Glideslope feed.");
   return {
+    sourceCommit: manifest.source.commit, version: manifest.version, build: manifest.build,
     artifactKey: bridgeURL.pathname.slice(1), appcastKey: legacyFeedURL.pathname.slice(1),
     artifactSha256: bridgeZipSha256, appcastSha256: bridgeAppcastSha256, hostBundleId: manifest.bundleId,
     manifestSignatureVerified: decodedBridge.signatureVerified
   };
+}
+
+// Ancestry is read from this checkout's history (exit 1 = not an ancestor).
+function isAncestorCommit(ancestor, descendant) {
+  try {
+    execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", ancestor, descendant], { stdio: "ignore" });
+    return true;
+  } catch (error) {
+    if (error.status === 1) return false;
+    throw new Error(`Cannot check bridge ancestry in ${root}; the Alight release commit must be present in this checkout.`);
+  }
 }
 
 function parseAppcast(xml) {
@@ -219,7 +239,7 @@ async function decodeAndVerifyManifest(document, expected) {
     // bundle identities migrate. The Ed25519 key bytes are unchanged.
     executableTrust: { authority: "product-native", verifier: "sparkle-ed25519", keyId: "sparkle-glideslope-1" },
     installer: { adapterId: "alight.sparkle.macos.v1", kind: "native-updater" },
-    allowedSourceRepositories: ["https://github.com/owl-and-kestrel/alight.git"],
+    allowedSourceRepositories: [expected.identity.sourceRepository],
     sourceBuildConfigurations: ["release"],
     allowedArtifactOrigins: [updateOrigin.origin],
     allowedArtifactPathPrefixes: [expected.identity.artifactPathPrefix],

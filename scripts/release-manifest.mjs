@@ -22,6 +22,7 @@
 //
 // CLI:
 //   release-manifest.mjs payload alight|bridge   payload JSON to stdout (inputs from ALIGHT_* env)
+//   release-manifest.mjs bridge-pin              "<commit> <version> <build>" of the admitted bridge
 //   release-manifest.mjs sign <payload.json> <manifest.json>
 //     Signs when OK_RELEASE_PRIVATE_KEY_FILE (preferred) or OK_RELEASE_PRIVATE_KEY_PEM
 //     is set; otherwise writes the payload bytes unchanged as an unsigned preview.
@@ -33,6 +34,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ALIGHT_SOURCE_REPOSITORY = "https://github.com/owl-and-kestrel/alight.git";
+// The Glideslope bridge is the one historical announcement release that Nest
+// admits on the old feed (Nest scripts/nest-sparkle-publication.mjs,
+// GLIDESLOPE_BRIDGE_SOURCE_URL and normalizeBridgeInput). Its bytes are built
+// from commit 9df75478, which predates the rename. The repository was renamed
+// in place from glideslope to alight, keeping its Nest repo/cell IDs and GitHub
+// numeric ID (Nest docs/release-origin-alight-cutover.md). So glideslope.git is
+// the true historical name of this same repository for those bytes, and
+// 9df75478 is an ancestor of alight main.
+export const GLIDESLOPE_BRIDGE = Object.freeze({
+  sourceRepository: "https://github.com/owl-and-kestrel/glideslope.git",
+  sourceCommit: "9df75478514deb724fdf161c1f6862bb7761e599",
+  version: "0.5.2",
+  build: 12
+});
 export const DEFAULT_PUBLISHER = Object.freeze({ id: "owl-kestrel", name: "Owl & Kestrel", domain: "owlandkestrel.com", keyId: "ok-release-p256-v1" });
 const MAX_PRIVATE_KEY_BYTES = 64 * 1024;
 
@@ -42,13 +57,18 @@ export function buildAlightPayload(input) {
 }
 
 /**
- * The Glideslope bridge: the same Alight build wrapped as Glideslope.app for
- * the historical feed. Its update identity is the Glideslope host that Sparkle
- * updates (appId glideslope, bundle com.owlandkestrel.glideslope) and its feed
- * is the legacy appcast; its source is the Alight commit it was built from.
+ * The Glideslope bridge: the historical Glideslope 0.5.2 (12) announcement
+ * build from GLIDESLOPE_BRIDGE.sourceCommit, published once on the legacy
+ * feed. Only that exact clean release identity is accepted; current Alight
+ * bytes are never labelled as Glideslope.
  */
 export function buildBridgePayload(input) {
-  return productUpdatePayload({ ...input, appId: "glideslope", bundleId: "com.owlandkestrel.glideslope" });
+  if (String(input.version) !== GLIDESLOPE_BRIDGE.version || Number(input.build) !== GLIDESLOPE_BRIDGE.build
+    || input.sourceCommit !== GLIDESLOPE_BRIDGE.sourceCommit) {
+    throw new Error(`The Glideslope bridge must be ${GLIDESLOPE_BRIDGE.version} (${GLIDESLOPE_BRIDGE.build}) from ${GLIDESLOPE_BRIDGE.sourceCommit}.`);
+  }
+  if (input.sourceDirty !== false) throw new Error("The Glideslope bridge must be built from a clean tree.");
+  return productUpdatePayload({ ...input, appId: "glideslope", bundleId: "com.owlandkestrel.glideslope", sourceRepository: GLIDESLOPE_BRIDGE.sourceRepository });
 }
 
 function productUpdatePayload(input) {
@@ -82,7 +102,7 @@ function productUpdatePayload(input) {
       automaticByDefault: true
     },
     source: {
-      repository: ALIGHT_SOURCE_REPOSITORY,
+      repository: input.sourceRepository ?? ALIGHT_SOURCE_REPOSITORY,
       commit: String(input.sourceCommit),
       dirty: input.sourceDirty,
       buildConfiguration: String(input.buildConfiguration)
@@ -221,6 +241,10 @@ async function main(argv) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
+  if (command === "bridge-pin" && rest.length === 0) {
+    process.stdout.write(`${GLIDESLOPE_BRIDGE.sourceCommit} ${GLIDESLOPE_BRIDGE.version} ${GLIDESLOPE_BRIDGE.build}\n`);
+    return;
+  }
   if (command === "sign" && rest.length === 2) {
     const result = await signManifestFile(rest[0], rest[1]);
     process.stderr.write(result.signed
@@ -228,7 +252,7 @@ async function main(argv) {
       : `No O+K release key configured; ${rest[1]} is an unsigned preview.\n`);
     return;
   }
-  process.stderr.write("usage: release-manifest.mjs payload alight|bridge\n       release-manifest.mjs sign <payload.json> <manifest.json>\n");
+  process.stderr.write("usage: release-manifest.mjs payload alight|bridge\n       release-manifest.mjs bridge-pin\n       release-manifest.mjs sign <payload.json> <manifest.json>\n");
   process.exitCode = 2;
 }
 
