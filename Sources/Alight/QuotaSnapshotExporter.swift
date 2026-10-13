@@ -79,16 +79,19 @@ enum ProviderFailureCode: String, Codable, Sendable {
 /// trimmed. The raw identifier never leaves the caller; only this digest is
 /// exported.
 ///
-/// The digest is only useful if it is byte-identical to Fieldbook's, so the
-/// JavaScript string operations are ported exactly rather than approximated
-/// with Foundation: `trim()` removes the ECMAScript WhiteSpace and
-/// LineTerminator set (U+FEFF yes, U+0085 no), `toLowerCase()` applies the
-/// full Unicode lowercase mapping including the context-dependent final
-/// sigma, and neither side normalizes (NFC and NFD spellings of one name give
-/// different digests in both). An email containing a code point this runtime's
-/// Unicode tables do not assign returns nil: its lowercase form could differ
-/// from Fieldbook's (Node's ICU) tables, and an unbound reading is honest
-/// where a wrong digest would silently misattribute it.
+/// The digest is only useful if it is byte-identical to Fieldbook's, so
+/// `trim()` is ported exactly rather than approximated with Foundation: it
+/// removes the ECMAScript WhiteSpace and LineTerminator set (U+FEFF yes,
+/// U+0085 no), and neither side normalizes.
+///
+/// `toLowerCase()` is only reproduced for ASCII. An email identifier that
+/// still contains any non-ASCII scalar after trimming returns nil: its
+/// lowercase form depends on the runtime's Unicode case tables, and Swift's
+/// and Fieldbook's Node (Unicode 16.0) differ for newer characters (U+16EA0,
+/// U+A7CE, …), which would give a well-formed digest with the wrong meaning.
+/// No cross-runtime case-mapping parity is guaranteed, so an unbound reading
+/// is the honest result. Opaque identifiers and the organization are never
+/// case-mapped, so they are hashed whatever their scalars.
 enum UsageAccountRef {
   static let tag = "ok.fieldbook.usage-account.v1"
 
@@ -106,14 +109,24 @@ enum UsageAccountRef {
     case .opaque:
       id = trimmed
     case .email:
-      guard trimmed.unicodeScalars.allSatisfy({ $0.isASCII || $0.properties.generalCategory != .unassigned }) else {
-        return nil
-      }
-      id = javaScriptLowercase(trimmed)
+      guard let lowered = asciiLowercase(trimmed) else { return nil }
+      id = lowered
     }
     let org = javaScriptTrim(organization ?? "")
     let payload = "[" + [tag, provider.rawValue, kind.rawValue, org, id].map(javaScriptJSONString).joined(separator: ",") + "]"
     return SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// JavaScript `toLowerCase()` of an all-ASCII string: `A`–`Z` to `a`–`z`,
+  /// identical in every Unicode version. nil if any scalar is above U+007F,
+  /// where no table-independent answer exists.
+  static func asciiLowercase(_ value: String) -> String? {
+    var out = String.UnicodeScalarView()
+    for scalar in value.unicodeScalars {
+      guard scalar.isASCII else { return nil }
+      out.append(("A"..."Z").contains(scalar) ? Unicode.Scalar(scalar.value + 0x20)! : scalar)
+    }
+    return String(out)
   }
 
   /// ECMAScript WhiteSpace plus LineTerminator (ECMA-262 §12.2–12.3), the set

@@ -2,9 +2,10 @@ import Foundation
 import Testing
 @testable import Alight
 
-/// Regressions for the independent review of the first exporter candidate
+/// Regressions for the independent reviews of the exporter candidates
 /// (cached capture time, a cache hiding a current sign-in failure, digest
-/// normalization, and the safe-integer sequence bound). Each expectation is
+/// normalization and its Unicode-version boundary, and the safe-integer
+/// sequence bound). Each expectation is
 /// a Fieldbook v1 contract property; this suite uses only the exporter's
 /// original API so it also compiles against, and fails on, that candidate.
 @Suite("Quota snapshot contract regressions")
@@ -137,38 +138,41 @@ struct QuotaSnapshotContractRegressionTests {
 
   // MARK: Digest normalization (review N1)
 
-  /// Expected values are Fieldbook's own `usageAccountRef`
+  /// Digests are Fieldbook's own `usageAccountRef`
   /// (`src/quota/provider-usage-derive.mjs` at 20bb37d8), computed in Node
   /// 22 (Unicode 16.0): JavaScript `trim()` and `toLowerCase()`, no
-  /// normalization.
-  private static let fieldbookVectors: [(Provider, String?, String, UsageAccountRef.IdentifierKind, String)] = [
-    (.claude, "org-1", " Person@Example.com ", .email, "20c7dab6cb1226b72df272f27dc62ca8fe2d011e731abfd37a27986e8b6d54e7"),
-    (.claude, "\u{FEFF}org-1\u{FEFF}", "\u{FEFF}Person@Example.com\u{FEFF}", .email, "20c7dab6cb1226b72df272f27dc62ca8fe2d011e731abfd37a27986e8b6d54e7"),
-    (.claude, "\u{85}org-1\u{85}", "\u{85}Person@Example.com\u{85}", .email, "4ae0121e2faf0023d70553d5e3fdec03ebdde065f16718e8adf625cb5c6b4769"),
-    (.claude, "\u{3000}\u{2028}org\u{2029}\u{A0}", "\u{1680}\u{2000}\u{200A}\u{202F}\u{205F}\u{B}\u{C}A@B.C\u{9}\u{D}\u{A}", .email, "a697816d3d90e46677db42d1ca2b98d9eeda505916f999b8fe9d96a11f9da39d"),
-    (.claude, "\u{180E}org\u{200B}", "\u{180E}A@B.C\u{200B}", .email, "893ed588836ab8bb86e8203a672d956d7b601962b68691fa778ec59144aab132"),
-    (.claude, "org", "\u{39F}\u{394}\u{3A5}\u{3A3}\u{3A3}\u{395}\u{3A5}\u{3A3}@Example.com", .email, "35e04a15219ec05f87a4e05d4678252bf0893c2552e17a6d22becb9470d60ec3"),
-    (.claude, "org", "\u{3A3}@x", .email, "a6b2399b3387dcb076ad93ff3348027918561daefa5284495120f1addcfa9d47"),
-    (.claude, "org", "A\u{3A3}.b", .email, "5359fcdf79fd4e8394c58b2acc97bc0514af82eb14ed05cc62174e9b854d2b29"),
-    (.claude, "org", "A\u{3A3}\u{301}", .email, "5f23ab3e6e051245e744544d05cf0e236a5fb46fe20d3ecef0ee16819e5999c5"),
-    (.claude, "org", "\u{130}STANBUL@Example.com", .email, "7288dfbe09b2c01fc2afcbb559352ab46338a15e805f83a47506456a0dcfae6c"),
-    (.claude, "org", "\u{1E9E}\u{212A}\u{2126}@X", .email, "53411f2478df87e9797ae50a71f3d075c117ee34073dab34409a589cba5f30a2"),
-    (.claude, "org", "Cafe\u{301}@X", .email, "95fd604fce0ba05ae3c49ba68fb687232c674f8f918f30e6744188f55758450e"),
-    (.claude, "org", "Caf\u{E9}@X", .email, "eeff73135d9894b86d4f278fe6dad778506b40d73bf74fd5a3db07a0ec98107c"),
-    (.claude, "org", "\u{FF21}\u{FF22}\u{FF23}@\u{FF38}", .email, "b0221a1ecd09e7d52bcc7e8cb22a3bdd07cdab9f165fffbc9bf232068c2f5e64"),
-    (.claude, "org", "\u{13A0}\u{13F5}@X", .email, "41b6e7bf95a688dc11346573a45787dd20fb7fbc5f747830f14a15be54d3f09b"),
-    (.claude, "org", "\u{10400}\u{1E900}@X", .email, "29ea1210063eb9fede2b534a2ebb6504932a65ff7403ae569a0e5643c0db9ea2"),
-    (.codex, nil, "\u{FEFF}Acct-123\u{85}", .opaque, "ef17aee9e06aeffcfdf893106557b98d84839d5fed5083848bf27a4fcb9a6f42"),
-    (.codex, "", " \u{C0}B\u{3000}", .opaque, "a4bb0a032ee08860a80cc3436d179cac5688b390952ee203ca5e11e1a80f72a6"),
+  /// normalization. The last column says whether Alight binds the reading:
+  /// an email that still has a non-ASCII scalar after `trim()` is unbound
+  /// (nil), because its lowercase form depends on the runtime's Unicode case
+  /// tables; every bound digest must equal Fieldbook's.
+  private static let fieldbookVectors: [(Provider, String?, String, UsageAccountRef.IdentifierKind, String, Bool)] = [
+    (.claude, "org-1", " Person@Example.com ", .email, "20c7dab6cb1226b72df272f27dc62ca8fe2d011e731abfd37a27986e8b6d54e7", true),
+    (.claude, "\u{FEFF}org-1\u{FEFF}", "\u{FEFF}Person@Example.com\u{FEFF}", .email, "20c7dab6cb1226b72df272f27dc62ca8fe2d011e731abfd37a27986e8b6d54e7", true),
+    (.claude, "\u{85}org-1\u{85}", "\u{85}Person@Example.com\u{85}", .email, "4ae0121e2faf0023d70553d5e3fdec03ebdde065f16718e8adf625cb5c6b4769", false),
+    (.claude, "\u{3000}\u{2028}org\u{2029}\u{A0}", "\u{1680}\u{2000}\u{200A}\u{202F}\u{205F}\u{B}\u{C}A@B.C\u{9}\u{D}\u{A}", .email, "a697816d3d90e46677db42d1ca2b98d9eeda505916f999b8fe9d96a11f9da39d", true),
+    (.claude, "\u{180E}org\u{200B}", "\u{180E}A@B.C\u{200B}", .email, "893ed588836ab8bb86e8203a672d956d7b601962b68691fa778ec59144aab132", false),
+    (.claude, "org", "\u{39F}\u{394}\u{3A5}\u{3A3}\u{3A3}\u{395}\u{3A5}\u{3A3}@Example.com", .email, "35e04a15219ec05f87a4e05d4678252bf0893c2552e17a6d22becb9470d60ec3", false),
+    (.claude, "org", "\u{3A3}@x", .email, "a6b2399b3387dcb076ad93ff3348027918561daefa5284495120f1addcfa9d47", false),
+    (.claude, "org", "A\u{3A3}.b", .email, "5359fcdf79fd4e8394c58b2acc97bc0514af82eb14ed05cc62174e9b854d2b29", false),
+    (.claude, "org", "A\u{3A3}\u{301}", .email, "5f23ab3e6e051245e744544d05cf0e236a5fb46fe20d3ecef0ee16819e5999c5", false),
+    (.claude, "org", "\u{130}STANBUL@Example.com", .email, "7288dfbe09b2c01fc2afcbb559352ab46338a15e805f83a47506456a0dcfae6c", false),
+    (.claude, "org", "\u{1E9E}\u{212A}\u{2126}@X", .email, "53411f2478df87e9797ae50a71f3d075c117ee34073dab34409a589cba5f30a2", false),
+    (.claude, "org", "Cafe\u{301}@X", .email, "95fd604fce0ba05ae3c49ba68fb687232c674f8f918f30e6744188f55758450e", false),
+    (.claude, "org", "Caf\u{E9}@X", .email, "eeff73135d9894b86d4f278fe6dad778506b40d73bf74fd5a3db07a0ec98107c", false),
+    (.claude, "org", "\u{FF21}\u{FF22}\u{FF23}@\u{FF38}", .email, "b0221a1ecd09e7d52bcc7e8cb22a3bdd07cdab9f165fffbc9bf232068c2f5e64", false),
+    (.claude, "org", "\u{13A0}\u{13F5}@X", .email, "41b6e7bf95a688dc11346573a45787dd20fb7fbc5f747830f14a15be54d3f09b", false),
+    (.claude, "org", "\u{10400}\u{1E900}@X", .email, "29ea1210063eb9fede2b534a2ebb6504932a65ff7403ae569a0e5643c0db9ea2", false),
+    (.codex, nil, "\u{FEFF}Acct-123\u{85}", .opaque, "ef17aee9e06aeffcfdf893106557b98d84839d5fed5083848bf27a4fcb9a6f42", true),
+    (.codex, "", " \u{C0}B\u{3000}", .opaque, "a4bb0a032ee08860a80cc3436d179cac5688b390952ee203ca5e11e1a80f72a6", true),
   ]
 
-  @Test("accountRef equals Fieldbook's digest for JavaScript-only whitespace, final sigma, and unnormalized input")
+  @Test("accountRef equals Fieldbook's digest for JavaScript-only whitespace and unnormalized input, or is null for a non-ASCII email")
   func accountRefMatchesFieldbookUnicode() throws {
     var actual: [[String: String]] = []
     for (index, vector) in Self.fieldbookVectors.enumerated() {
       let digest = UsageAccountRef.digest(
         provider: vector.0, organization: vector.1, identifier: vector.2, kind: vector.3)
-      #expect(digest == vector.4, "vector \(index)")
+      #expect(digest == (vector.5 ? vector.4 : nil), "vector \(index)")
       actual.append([
         "provider": vector.0.rawValue, "organization": vector.1 ?? "", "identifier": vector.2,
         "identifierKind": vector.3.rawValue, "actualSwift": digest ?? "null",
@@ -180,6 +184,40 @@ struct QuotaSnapshotContractRegressionTests {
       try JSONSerialization.data(withJSONObject: actual, options: [.prettyPrinted, .sortedKeys])
         .write(to: URL(fileURLWithPath: directory).appending(path: "digests.vectors"))
     }
+  }
+
+  /// The independent R2 review's version-boundary scalars: assigned in this
+  /// Swift runtime, unassigned in Fieldbook's Node (Unicode 16.0), so R2
+  /// emitted well-formed digests Fieldbook computes differently (U+16EA0:
+  /// Swift `28e99796…`, Fieldbook `79d9d80a…`).
+  @Test("an email with a Unicode-version-boundary scalar is unbound, never a digest Fieldbook computes differently",
+    arguments: [0x16EA0, 0x16EA1, 0x16EB0, 0xA7CE, 0xA7D2] as [UInt32])
+  func versionBoundaryEmailUnbound(codepoint: UInt32) throws {
+    let identifier = String(Character(try #require(Unicode.Scalar(codepoint)))) + "@X"
+    let digest = UsageAccountRef.digest(provider: .claude, organization: "org", identifier: identifier, kind: .email)
+    #expect(digest == nil, "U+\(String(codepoint, radix: 16, uppercase: true))")
+    if let directory = ProcessInfo.processInfo.environment["ALIGHT_QUOTA_SNAPSHOT_FIXTURE_DIR"], !directory.isEmpty {
+      let vector = [
+        "provider": "claude", "organization": "org", "identifier": identifier, "identifierKind": "email",
+        "actualSwift": digest ?? "null",
+      ]
+      try JSONSerialization.data(withJSONObject: [vector], options: [.prettyPrinted, .sortedKeys]).write(
+        to: URL(fileURLWithPath: directory).appending(path: "digests-boundary-\(String(codepoint, radix: 16)).vectors"))
+    }
+  }
+
+  @Test("an observed reading whose email cannot be lowercased table-independently is exported with a null accountRef")
+  func nonASCIIEmailReadingExportsUnbound() throws {
+    var result = Self.liveResult(.claude)
+    result.accountRef = UsageAccountRef.digest(
+      provider: .claude, organization: "org", identifier: "\u{16EA0}@X", kind: .email)
+    let entry = Self.entry(result, attemptedAt: Self.now, liveCapturedAt: Self.now)
+    #expect(entry.status == .observed)
+    #expect(entry.accountRef == nil)
+    #expect(!entry.groups.isEmpty)
+    try Self.emitFixture(
+      "unbound-nonascii-claude", [.init(result: result, attemptedAt: Self.now, liveCapturedAt: Self.now)],
+      writtenAt: Self.now)
   }
 
   @Test("a name Fieldbook's trim() finds blank is refused for that provider, not written for the reader to reject")
