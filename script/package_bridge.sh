@@ -12,8 +12,9 @@ set -euo pipefail
 # Alight bytes are never relabelled as Glideslope.
 #
 # Inputs:
-#   ALIGHT_BRIDGE_SOURCE_COMMIT  bridge commit (default: the Nest pin, from
-#                                scripts/release-manifest.mjs bridge-pin)
+#   ALIGHT_BRIDGE_SOURCE_COMMIT  bridge commit; must equal the Nest pin
+#                                (scripts/release-manifest.mjs bridge-pin),
+#                                which is also the default
 #   ALIGHT_BRIDGE_SOURCE_DIR     optional clean checkout/worktree at exactly that
 #                                commit; its dist/Glideslope.app is reused when
 #                                it is a clean release build of that commit,
@@ -51,8 +52,8 @@ fi
 
 read -r PINNED_COMMIT PINNED_VERSION PINNED_BUILD < <(node "$RELEASE_MANIFEST_TOOL" bridge-pin)
 BRIDGE_SOURCE_COMMIT="${ALIGHT_BRIDGE_SOURCE_COMMIT:-$PINNED_COMMIT}"
-if [[ ! "$BRIDGE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "ALIGHT_BRIDGE_SOURCE_COMMIT must be a full lowercase commit id." >&2
+if [[ ! "$PINNED_COMMIT" =~ ^[0-9a-f]{40}$ || "$BRIDGE_SOURCE_COMMIT" != "$PINNED_COMMIT" ]]; then
+  echo "ALIGHT_BRIDGE_SOURCE_COMMIT must be the pinned bridge commit $PINNED_COMMIT." >&2
   exit 1
 fi
 

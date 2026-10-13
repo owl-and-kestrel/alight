@@ -144,28 +144,42 @@ export function payloadInputFromEnv(env) {
 /**
  * Reads an owner-only P-256 private key file. Refuses a symbolic link, a
  * non-regular file, another owner, or any group/other permission bit (so 0600
- * and 0400 pass, 0644 does not). The file is opened with O_NOFOLLOW and must be
- * the same inode that was inspected.
+ * and 0400 pass, 0644 does not). The file is opened with O_NOFOLLOW and
+ * O_NONBLOCK (a swapped-in FIFO is refused, not waited on), must be the inode
+ * that was inspected, and is read through that descriptor with a bounded
+ * buffer plus one overflow byte. Its dev/ino/size/mode/uid must be unchanged
+ * after the read and the size must equal the bytes read.
+ * `hooks.afterOpen` is a test seam for simulating a concurrent writer.
  */
-export async function readReleasePrivateKeyFile(filePath) {
+export async function readReleasePrivateKeyFile(filePath, hooks = {}) {
   if (typeof filePath !== "string" || !path.isAbsolute(filePath)) throw new Error("OK_RELEASE_PRIVATE_KEY_FILE must be an absolute path.");
   const before = await lstat(filePath);
   if (before.isSymbolicLink()) throw new Error("OK_RELEASE_PRIVATE_KEY_FILE must not be a symbolic link.");
   assertOwnerOnlyRegularFile(before);
-  const handle = await open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  let bytes;
+  const handle = await open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  const buffer = Buffer.alloc(MAX_PRIVATE_KEY_BYTES + 1);
   try {
-    const opened = await handle.stat();
-    if (opened.dev !== before.dev || opened.ino !== before.ino) throw new Error("OK_RELEASE_PRIVATE_KEY_FILE changed while it was being opened.");
-    assertOwnerOnlyRegularFile(opened);
-    bytes = await handle.readFile();
+    let length = 0;
+    try {
+      const opened = await handle.stat();
+      if (opened.dev !== before.dev || opened.ino !== before.ino) throw new Error("OK_RELEASE_PRIVATE_KEY_FILE changed while it was being opened.");
+      assertOwnerOnlyRegularFile(opened);
+      await hooks.afterOpen?.();
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+      if (length > MAX_PRIVATE_KEY_BYTES) throw new Error("OK_RELEASE_PRIVATE_KEY_FILE has an implausible size.");
+      const after = await handle.stat();
+      if (after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mode !== opened.mode
+        || after.uid !== opened.uid || after.size !== length) throw new Error("OK_RELEASE_PRIVATE_KEY_FILE changed while it was being read.");
+    } finally {
+      await handle.close();
+    }
+    return p256PrivateKey(buffer.subarray(0, length));
   } finally {
-    await handle.close();
-  }
-  try {
-    return p256PrivateKey(bytes);
-  } finally {
-    bytes.fill(0);
+    buffer.fill(0);
   }
 }
 
