@@ -470,6 +470,108 @@ struct QuotaSnapshotExporterTests {
     #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["quota-snapshot.v1.json"])
   }
 
+  @Test("a failed directory sync is reported as a typed error, never as written")
+  func directorySyncFailureReported() throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var exporter = QuotaSnapshotExporter(
+      directory: directory, producer: Self.producer, antigravityEndpointRef: nil, makeInstallId: { "install-1" })
+    #expect(exporter.export([], writtenAt: Self.now) == .written(sequence: 0))
+
+    exporter.directorySync.fsync = { _ in errno = EIO; return -1 }
+    guard case .failed(let reason) = exporter.export([], writtenAt: Self.now) else {
+      Issue.record("an unsynced directory must not report written")
+      return
+    }
+    #expect(reason == String(describing: QuotaSnapshotExporter.WriteError.directoryNotSynced("fsync", EIO)))
+    #expect(throws: QuotaSnapshotExporter.WriteError.directoryNotSynced("fsync", EIO)) {
+      try QuotaSnapshotExporter.writeAtomically(
+        Data("{}".utf8), to: exporter.fileURL, directorySync: exporter.directorySync)
+    }
+
+    exporter.directorySync = .system
+    exporter.directorySync.open = { _ in errno = EACCES; return -1 }
+    #expect(throws: QuotaSnapshotExporter.WriteError.directoryNotSynced("open", EACCES)) {
+      try QuotaSnapshotExporter.writeAtomically(
+        Data("{}".utf8), to: exporter.fileURL, directorySync: exporter.directorySync)
+    }
+
+    // An interrupted sync is retried, not reported.
+    let interrupted = Counter()
+    exporter.directorySync = .system
+    exporter.directorySync.fsync = { fd in
+      if interrupted.next() == 0 { errno = EINTR; return -1 }
+      return fsync(fd)
+    }
+    #expect(exporter.export([], writtenAt: Self.now) == .written(sequence: 2))
+    // The sequence never repeats after a failure: readers may have seen it.
+    let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: exporter.fileURL)) as? [String: Any])
+    #expect(root["sequence"] as? Int == 2)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["quota-snapshot.v1.json"])
+  }
+
+  private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func next() -> Int {
+      lock.lock()
+      defer { lock.unlock() }
+      value += 1
+      return value - 1
+    }
+  }
+
+  @Test("each poll's successful reading is stamped with its own completion time")
+  func pollStampsCapture() async throws {
+    let live = try Self.codexResult()
+    let (stamped, completedAt) = await UsageStore.capture { live }
+    #expect(stamped.capturedAt == completedAt)
+    let (failed, _) = await UsageStore.capture { .failure(.codex, source: "error", error: "x") }
+    #expect(failed.capturedAt == nil)
+  }
+
+  @Test("a cache written before exact capture times loads with its whole-second time")
+  func legacyCacheCaptureTime() throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appending(path: "usage-cache.json")
+    var live = try Self.codexResult()
+    live.capturedAt = Self.now.addingTimeInterval(0.125)
+    var first = UsageResultCache(persistenceURL: url)
+    _ = first.reconcile(live, now: Self.now.addingTimeInterval(1))
+
+    // Remove the fields this exporter added, as an older Alight wrote it.
+    var document = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    var readings = try #require(document["readings"] as? [String: [String: Any]])
+    readings["codex"]?["capturedAtExact"] = nil
+    readings["codex"]?["quotaReport"] = nil
+    document["readings"] = readings
+    try JSONSerialization.data(withJSONObject: document).write(to: url)
+
+    var relaunched = UsageResultCache(persistenceURL: url)
+    let cached = relaunched.reconcile(.failure(.codex, source: "error", error: "x"), now: Self.now.addingTimeInterval(60))
+    #expect(cached.source == "cached")
+    #expect(cached.capturedAt == Self.now)
+    #expect(cached.quotaReport == nil)
+  }
+
+  @Test("JavaScript trim and toLowerCase are ported exactly")
+  func javaScriptStringPort() {
+    #expect(UsageAccountRef.javaScriptTrim("\u{FEFF}\u{3000} a \u{85}\u{2029}") == "a \u{85}")
+    #expect(UsageAccountRef.javaScriptTrim("\u{180E}a\u{200B}") == "\u{180E}a\u{200B}")
+    #expect(UsageAccountRef.javaScriptTrim(" \t\n") == "")
+    #expect(UsageAccountRef.javaScriptLowercase("ΟΔΥΣΣΕΥΣ") == "οδυσσευς")
+    #expect(UsageAccountRef.javaScriptLowercase("Σ") == "σ")
+    #expect(UsageAccountRef.javaScriptLowercase("AΣ") == "aς")
+    // "." is case-ignorable, so a cased letter still follows: not final.
+    #expect(UsageAccountRef.javaScriptLowercase("AΣ.b") == "aσ.b")
+    #expect(UsageAccountRef.javaScriptLowercase("AΣ.") == "aς.")
+    #expect(UsageAccountRef.javaScriptLowercase("\u{130}") == "i\u{307}")
+    // Fieldbook slugs lowercase the same way.
+    #expect(QuotaSnapshotExporter.fieldbookGroupSlug("ΑΣ Models") == "_models")
+    #expect(QuotaSnapshotExporter.fieldbookIsPrimaryGroup("GEMINI"))
+  }
+
   @Test("a development build without a source commit writes nothing")
   func developmentBuildSkips() throws {
     let directory = try Self.temporaryDirectory()
@@ -486,7 +588,7 @@ struct QuotaSnapshotExporterTests {
 
   // MARK: Secrets
 
-  @Test("the export holds only domain-separated digests: no token, email, raw account id, or extra field")
+  @Test("the export holds only the account and endpoint digests: no token, email, raw account id, or extra field")
   func noSecretFields() throws {
     var claude = try Self.claudeResult(Self.claudeLines)
     claude.observationIdentity = ClaudeAuthStatus.observationIdentity(

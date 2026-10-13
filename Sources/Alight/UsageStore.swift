@@ -90,8 +90,9 @@ final class UsageStore {
       "Claude refresh decision force=\(force, privacy: .public) due=\(isClaudeDue, privacy: .public) next_allowed_in=\(nextAllowedBeforePoll, privacy: .public) cache_age=\(cacheAgeBeforePoll, privacy: .public)"
     )
     if force || isClaudeDue {
-      let fresh = await claude.result(now: now)
+      var fresh = await claude.result(now: now)
       let capturedAt = Date()
+      if fresh.ok { fresh.capturedAt = capturedAt }
       claudeCapturedAt = capturedAt
       claudeSchedule.record(fresh, at: capturedAt)
       claudeResult = fresh
@@ -136,9 +137,14 @@ final class UsageStore {
     ])
   }
 
-  private static func capture(_ operation: @Sendable () async -> ProviderResult) async -> (ProviderResult, Date) {
-    let result = await operation()
-    return (result, Date())
+  /// Runs one provider poll and stamps a successful reading with its own
+  /// completion time, which the cache keeps as the reading's capture time
+  /// (the refresh as a whole completes later, after every provider).
+  static func capture(_ operation: @Sendable () async -> ProviderResult) async -> (ProviderResult, Date) {
+    var result = await operation()
+    let completedAt = Date()
+    if result.ok { result.capturedAt = completedAt }
+    return (result, completedAt)
   }
 
   private static func logClaudeLiveAttempt(_ result: ProviderResult, now: Date, nextAllowed: Date) {
@@ -280,7 +286,7 @@ struct UsageResultCache: Sendable {
     guard let cached = lastGood[provider] else {
       return nil
     }
-    return max(0, now.timeIntervalSince(cached.capturedAt))
+    return max(0, now.timeIntervalSince(cached.readAt))
   }
 
   /// Fold a fresh poll against the last-good cache. Successful readings refresh
@@ -292,6 +298,13 @@ struct UsageResultCache: Sendable {
   ///
   /// Claude readings are reused only for the same verified account: a result
   /// whose account is unknown or different drops the cached Claude reading.
+  ///
+  /// A cached reading's time is the provider's own capture
+  /// (`result.capturedAt`, stamped when its poll returned), not `now`: the
+  /// refresh reconciles only after every provider has answered, and the
+  /// export and the cache age must not move the reading later. `now` is the
+  /// clock for age and expiry; it falls back as the capture time only for a
+  /// result that carries none.
   mutating func reconcile(_ result: ProviderResult, now: Date) -> ProviderResult {
     let claudeAccount = result.provider == .claude ? Self.claudeAccountKey(result.observationIdentity) : nil
     if result.provider == .claude, claudeAccount == nil || lastGood[.claude]?.sourceIdentity != claudeAccount {
@@ -313,11 +326,13 @@ struct UsageResultCache: Sendable {
       case .claude: claudeAccount
       case .codex: nil
       }
+      let readAt = result.capturedAt.flatMap { $0.timeIntervalSinceReferenceDate.isFinite ? $0 : nil } ?? now
       lastGood[result.provider] = CachedUsageReading(
         windows: result.windows,
-        capturedAt: now,
+        capturedAt: readAt,
         sourceIdentity: sourceIdentity,
-        quotaReport: result.quotaReport
+        quotaReport: result.quotaReport,
+        capturedAtExact: readAt.timeIntervalSinceReferenceDate
       )
       persist()
       return result
@@ -327,7 +342,7 @@ struct UsageResultCache: Sendable {
       return result
     }
 
-    let age = max(0, now.timeIntervalSince(cached.capturedAt))
+    let age = max(0, now.timeIntervalSince(cached.readAt))
     // A reading older than `maxCacheAge` is no longer a useful stand-in for live
     // usage, even before its window resets (a 38h-old "93% left" misled).
     let validWindows = age > Self.maxCacheAge ? [] : cached.windows
@@ -364,7 +379,7 @@ struct UsageResultCache: Sendable {
     )
     cachedResult.quotaReport = cached.quotaReport.map { Self.unexpired($0, now: now) }
     cachedResult.accountRef = result.accountRef
-    cachedResult.capturedAt = cached.capturedAt
+    cachedResult.capturedAt = cached.readAt
     return cachedResult
   }
 
@@ -476,6 +491,16 @@ private struct CachedUsageReading: Codable, Sendable {
   /// The reading's provider-reported facts for the quota snapshot export.
   /// Optional, so caches written before the exporter still load.
   var quotaReport: QuotaReport? = nil
+  /// `capturedAt` as `Date.timeIntervalSinceReferenceDate`, which round-trips
+  /// exactly. The cache's ISO 8601 date strategy drops fractional seconds,
+  /// and the export promises the millisecond capture time across a relaunch.
+  /// Optional, so older caches still load (their whole-second time is used).
+  var capturedAtExact: Double? = nil
+
+  /// When the provider was actually read, at full precision when known.
+  var readAt: Date {
+    capturedAtExact.flatMap { $0.isFinite ? Date(timeIntervalSinceReferenceDate: $0) : nil } ?? capturedAt
+  }
 }
 
 private extension JSONEncoder {

@@ -217,7 +217,10 @@ struct ProviderResult: Sendable {
   var accountRef: String? = nil
   /// Why a failed poll failed, in the export's closed vocabulary.
   var failureCode: ProviderFailureCode? = nil
-  /// When a cached reading was taken. Set by the cache; never rebased.
+  /// When the provider was actually read: the live request's completion
+  /// (stamped by `UsageStore` as each poll returns), or, for a cached
+  /// reading, that original time restored from the cache. Never the
+  /// reconciliation or refresh-completion clock, and never rebased.
   var capturedAt: Date? = nil
 
   var cacheAgeDisplay: String? {

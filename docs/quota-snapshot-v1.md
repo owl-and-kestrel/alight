@@ -18,6 +18,8 @@ it; read this file.
 | Path | `~/Library/Application Support/Alight/quota-snapshot.v1.json`, beside `usage-cache.json` (design r2 §4.1). Application Support is not synced by iCloud Drive. |
 | Permissions | file `0600`, directory `0700` |
 | Atomicity | temporary file in the same directory (`O_CREAT \| O_EXCL \| O_NOFOLLOW`), `fsync`, `rename` over the target, `fsync` of the directory. A reader sees the previous or the new complete file. A symlink at the target is replaced, never followed. |
+| Durability | the export reports `written` only after the directory `fsync` succeeds. If the directory cannot be opened or synced after the rename, the new file is already in place (a reader may see it) but the write is reported as failed (`WriteError.directoryNotSynced`) and logged; `EINTR` is retried. The next write still uses the next `sequence`, so a value a reader may have seen is never reused |
+| Trust | the parent directories are trusted, as the cache's are: the exporter does not defend against an alias to the Application Support folder created by the same user |
 | Size | at most 256 KiB (the reader's bound); a few KB in practice |
 | Trigger | the end of each `UsageStore.performRefresh` (event-driven, on the existing poll), failures included |
 | Development builds | an app without a 40-hex `AlightSourceCommit` in its Info.plist (for example `swift run`) writes nothing, because the reader would refuse the file |
@@ -58,10 +60,15 @@ schema is closed: no other key is ever written.
   provider is exported as `failed` with `parse_failed`, and the menu still shows its clamped display value.
 - Failures are exported too (`failed`, `signed_out`, `refused`, `deferred`). They carry `capturedAt: null` and no
   groups, so they become unknowns in Fieldbook rather than "available".
-- `capturedAt` is the time the provider was actually read and is never rebased. A cached reading keeps the capture
-  time recorded by the cache.
-- The export holds no credentials, tokens, cookies, raw HTTP bodies, raw emails or organisation ids; only the
-  domain-separated digests `accountRef` and `endpointRef`.
+- `capturedAt` is the time the provider was actually read and is never rebased. A cached reading keeps its original
+  capture time: the completion of the provider's own request, not the end of the refresh that cached it, and to the
+  millisecond across a relaunch.
+- A current attempt that needs sign-in is `signed_out` with `auth_required`, even when the menu is still showing a
+  last-good cached reading. The cache never turns a known sign-in failure into an observed reading.
+- The export holds no credentials, tokens, cookies, raw HTTP bodies, raw emails or organisation ids; only two
+  digests. `accountRef` is domain-separated (Fieldbook's `ok.fieldbook.usage-account.v1` tag). `endpointRef` is
+  not: it is the plain sha256 of the Antigravity endpoint URL, the fingerprint Alight's cache already uses; changing
+  it would need Fieldbook's agreement. Both are stable pseudonymous identifiers, not authenticated identities.
 - Versioning: `schema` carries the major version. Additive optional fields keep v1; a changed meaning, a removed
   field or a growing closed vocabulary is v2. Fieldbook treats any other version as `snapshot_schema_unsupported`,
   a `sequence` regression under one `installId` as `snapshot_sequence_regression`, and a `writtenAt` older than
@@ -75,8 +82,8 @@ schema is closed: no other key is ever written.
 |---|---|
 | `producer.app` | the constant `com.owlandkestrel.alight` |
 | `producer.version`, `build`, `sourceCommit` | Info.plist `CFBundleShortVersionString`, `CFBundleVersion`, `AlightSourceCommit` (stamped by `script/build_and_run.sh`) |
-| `installId` | a random lowercase UUID. It resumes from Alight's own previous `quota-snapshot.v1.json`; if that file is missing or unreadable a new one is drawn, which can never read as a regression of the old one |
-| `sequence` | 0 for a new `installId`, then +1 per write, resumed from the previous file across relaunches |
+| `installId` | a random lowercase UUID. It resumes from Alight's own previous `quota-snapshot.v1.json`; if that file is missing or unreadable, or its `sequence` is not a non-negative safe integer, a new one is drawn, which can never read as a regression of the old one |
+| `sequence` | 0 for a new `installId`, then +1 per write, resumed from the previous file across relaunches. Never above `Number.MAX_SAFE_INTEGER` (2^53 − 1), the reader's bound: the write after that value starts a new `installId` at 0 |
 | `writtenAt` | wall clock at the write, UTC with milliseconds |
 | `providers` | one entry per provider per refresh, sorted `antigravity`, `claude`, `codex` |
 
@@ -84,13 +91,13 @@ schema is closed: no other key is ever written.
 
 | Field | Source |
 |---|---|
-| `status` | `observed` when the refresh produced windows with exportable facts; otherwise `deferred` (Claude not due; source `deferred`), `refused` (Claude Code answered `/usage` with a model turn), `signed_out` (the provider needs sign-in: missing or expired credentials, HTTP 401, `claude auth status` signed out), else `failed` |
+| `status` | `observed` when the refresh produced windows with exportable facts and the current attempt does not need sign-in; otherwise `deferred` (Claude not due; source `deferred`), `refused` (Claude Code answered `/usage` with a model turn), `signed_out` (the current attempt needs sign-in: missing or expired credentials, HTTP 401, `claude auth status` signed out; also when a cached reading is being shown), else `failed` |
 | `attemptedAt` | the start of the refresh |
-| `capturedAt` | live: the completion time of that provider's request. Cached: the cache's recorded capture time. `null` when not observed |
+| `capturedAt` | live: the completion time of that provider's request. Cached: that same original time, kept by the cache at full precision (older caches: whole seconds). `null` when not observed |
 | `readingSource` | `cached` when the menu is showing a last-good reading after a failed or deferred poll; otherwise `live` (for a failure: no reading was substituted) |
-| `cacheAgeSeconds` | the cache age for a cached reading; for a failure whose cached reading has expired, its age; else `null` |
-| `accountRef` | Fieldbook `usageAccountRef`: sha256 of the JSON array `['ok.fieldbook.usage-account.v1', provider, identifierKind, organization.trim(), identifier]`. Claude: `identifierKind 'email'`, the email (trimmed, lowercased) and `orgId` from `claude auth status --json`. Codex: `'opaque'`, the `account_id` sent with the request, organization `''`. Antigravity: `null` (no account identity is read). A cached Codex reading is `null`, because the cache does not bind Codex readings to an account |
-| `endpointRef` | Antigravity only: sha256 of the usage endpoint URL, the same fingerprint the cache binds Antigravity readings to. `null` for Claude and Codex |
+| `cacheAgeSeconds` | for a cached reading, its age at the end of this refresh, measured from the original `capturedAt`; for a failure with a cached reading (expired, or not exported because sign-in is needed), that reading's age; else `null` |
+| `accountRef` | Fieldbook `usageAccountRef`: sha256 of the JSON array `['ok.fieldbook.usage-account.v1', provider, identifierKind, organization.trim(), identifier]`, with JavaScript's `trim()` and `toLowerCase()` ported exactly (ECMAScript whitespace: U+FEFF is trimmed, U+0085 is not; final sigma; no Unicode normalization on either side). An email containing a code point Alight's Unicode tables do not assign gives `null` rather than risk a digest Fieldbook would compute differently. Claude: `identifierKind 'email'`, the email (trimmed, lowercased) and `orgId` from `claude auth status --json`. Codex: `'opaque'`, the `account_id` sent with the request, organization `''`. Antigravity: `null` (no account identity is read). A cached Codex reading is `null`, because the cache does not bind Codex readings to an account |
+| `endpointRef` | Antigravity only: plain sha256 of the usage endpoint URL (not domain-separated), the same fingerprint the cache binds Antigravity readings to. `null` for Claude and Codex |
 | `failure` | `null` when observed. `signed_out`: `{auth_required, needsAuth: true}`. `refused`: `{refused, false}`. `deferred`: `null`, or `{auth_required, true}` when the last attempt needed sign-in. `failed`: the client's code (below), `unknown` when it has none |
 
 Failure codes per client:
@@ -122,9 +129,10 @@ Each parser records the provider's own facts beside the display windows (`QuotaR
 | `scope` | `null` for the session and all-models week; `{model, <key>, <name>}` for a model week (`fable`/`Fable`) | `null` | `null` (the group is the scope; Fieldbook maps groups to pools) |
 
 A cached reading exports the facts stored with it, minus windows whose reported reset has passed (the display drops
-the same windows).
+the same windows), unless the current attempt needs sign-in (then `signed_out`, above).
 
-Before writing, the exporter checks each provider against the reader: closed vocabularies, non-blank text, a whole
+Before writing, the exporter checks each provider against the reader: closed vocabularies, non-blank text (blank
+after JavaScript `trim()`, as Fieldbook tests it), a whole
 positive `windowSeconds`, a whole number under `floor_integer`, at least one window, and unique reader window keys
 (`windowId`, plus the Fieldbook group slug for a non-Gemini Antigravity group or the scope key for Claude). A provider
 that fails is exported as `failed`/`parse_failed`, so one bad provider cannot make Fieldbook refuse the whole file.
@@ -166,8 +174,13 @@ The tests write sample snapshots when `ALIGHT_QUOTA_SNAPSHOT_FIXTURE_DIR` names 
 
 ```sh
 mkdir -p /tmp/alight-fixtures
-ALIGHT_QUOTA_SNAPSHOT_FIXTURE_DIR=/tmp/alight-fixtures script/test_swift.sh --filter QuotaSnapshotExporterTests
+ALIGHT_QUOTA_SNAPSHOT_FIXTURE_DIR=/tmp/alight-fixtures \
+  script/test_swift.sh --skip liveFetchIfCredentialsExist --filter QuotaSnapshot
 ```
 
-Then run Fieldbook's `checkAlightSnapshot` and `normalizeAlightQuotaSnapshot` on each file (a `readAt` within 900 s of
-its `writtenAt`); both must accept it.
+The filter selects both suites (`QuotaSnapshotExporterTests`, `QuotaSnapshotContractRegressionTests`); the explicit
+`--skip` keeps the run offline even if the filter is widened. Then run Fieldbook's `checkAlightSnapshot` and
+`normalizeAlightQuotaSnapshot` on each `.json` file (a `readAt` within 900 s of its `writtenAt`); both must accept it.
+A cached sample must keep the live capture time, and a `signedout-cached-*` sample must normalize to an unknown with
+`alight:signed_out:auth_required`. `digests.vectors` lists each Unicode test vector with Alight's digest; each must
+equal Fieldbook's `usageAccountRef` for the same input.

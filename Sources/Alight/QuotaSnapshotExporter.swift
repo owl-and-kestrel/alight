@@ -75,8 +75,20 @@ enum ProviderFailureCode: String, Codable, Sendable {
 /// Fieldbook's `usageAccountRef` (`src/quota/provider-usage-derive.mjs`):
 /// sha256 of `JSON.stringify(['ok.fieldbook.usage-account.v1', provider,
 /// identifierKind, organization.trim(), identifier])`, where an email
-/// identifier is trimmed and lowercased and an opaque one only trimmed. The
-/// raw identifier never leaves the caller; only this digest is exported.
+/// identifier is `trim()`med and `toLowerCase()`d and an opaque one only
+/// trimmed. The raw identifier never leaves the caller; only this digest is
+/// exported.
+///
+/// The digest is only useful if it is byte-identical to Fieldbook's, so the
+/// JavaScript string operations are ported exactly rather than approximated
+/// with Foundation: `trim()` removes the ECMAScript WhiteSpace and
+/// LineTerminator set (U+FEFF yes, U+0085 no), `toLowerCase()` applies the
+/// full Unicode lowercase mapping including the context-dependent final
+/// sigma, and neither side normalizes (NFC and NFD spellings of one name give
+/// different digests in both). An email containing a code point this runtime's
+/// Unicode tables do not assign returns nil: its lowercase form could differ
+/// from Fieldbook's (Node's ICU) tables, and an unbound reading is honest
+/// where a wrong digest would silently misattribute it.
 enum UsageAccountRef {
   static let tag = "ok.fieldbook.usage-account.v1"
 
@@ -86,13 +98,74 @@ enum UsageAccountRef {
   }
 
   static func digest(provider: Provider, organization: String?, identifier: String?, kind: IdentifierKind) -> String? {
-    guard let trimmed = identifier?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-      return nil
+    guard let identifier else { return nil }
+    let trimmed = javaScriptTrim(identifier)
+    guard !trimmed.isEmpty else { return nil }
+    let id: String
+    switch kind {
+    case .opaque:
+      id = trimmed
+    case .email:
+      guard trimmed.unicodeScalars.allSatisfy({ $0.isASCII || $0.properties.generalCategory != .unassigned }) else {
+        return nil
+      }
+      id = javaScriptLowercase(trimmed)
     }
-    let id = kind == .email ? trimmed.lowercased() : trimmed
-    let org = (organization ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let org = javaScriptTrim(organization ?? "")
     let payload = "[" + [tag, provider.rawValue, kind.rawValue, org, id].map(javaScriptJSONString).joined(separator: ",") + "]"
     return SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// ECMAScript WhiteSpace plus LineTerminator (ECMA-262 §12.2–12.3), the set
+  /// `String.prototype.trim` removes: TAB, VT, FF, ZWNBSP (U+FEFF), every
+  /// `Zs` space, LF, CR, U+2028 and U+2029. U+0085 and U+180E are not in it.
+  static func isJavaScriptWhitespace(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x09...0x0D, 0x20, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF:
+      true
+    default:
+      false
+    }
+  }
+
+  /// JavaScript `String.prototype.trim`. Every code point in the set is in
+  /// the BMP, so trimming scalars equals trimming UTF-16 code units.
+  static func javaScriptTrim(_ value: String) -> String {
+    let scalars = value.unicodeScalars
+    guard let first = scalars.firstIndex(where: { !isJavaScriptWhitespace($0) }),
+      let last = scalars.lastIndex(where: { !isJavaScriptWhitespace($0) }) else {
+      return ""
+    }
+    return String(scalars[first...last])
+  }
+
+  /// JavaScript `String.prototype.toLowerCase`: Unicode default case
+  /// conversion, every code point's full lowercase mapping, with capital
+  /// sigma becoming final `ς` where the Final_Sigma condition holds (Unicode
+  /// §3.13, Table 3-17). Swift's `lowercased()` maps code points alone and
+  /// would always give `σ`.
+  static func javaScriptLowercase(_ value: String) -> String {
+    let scalars = Array(value.unicodeScalars)
+    var out = String.UnicodeScalarView()
+    for (index, scalar) in scalars.enumerated() {
+      if scalar.value == 0x03A3, isFinalSigma(at: index, in: scalars) {
+        out.append(Unicode.Scalar(0x03C2)!)
+      } else {
+        out.append(contentsOf: scalar.properties.lowercaseMapping.unicodeScalars)
+      }
+    }
+    return String(out)
+  }
+
+  /// Before C: a cased letter, then zero or more case-ignorable code points.
+  /// After C: not zero or more case-ignorable code points, then a cased letter.
+  private static func isFinalSigma(at index: Int, in scalars: [Unicode.Scalar]) -> Bool {
+    var before = index - 1
+    while before >= 0, scalars[before].properties.isCaseIgnorable { before -= 1 }
+    guard before >= 0, scalars[before].properties.isCased else { return false }
+    var after = index + 1
+    while after < scalars.count, scalars[after].properties.isCaseIgnorable { after += 1 }
+    return !(after < scalars.count && scalars[after].properties.isCased)
   }
 
   /// A string literal byte-identical to JavaScript's `JSON.stringify`: only
@@ -249,9 +322,13 @@ struct QuotaSnapshot: Encodable, Equatable {
 ///   iCloud Drive.
 /// - Atomic: a same-directory temporary file is written, `fsync`ed, renamed
 ///   over the target, and the directory is `fsync`ed. Mode 0600, directory 0700.
+///   `written` means all of that succeeded; a failed directory sync is
+///   reported, not ignored.
 /// - `installId` is random, not an identity. `sequence` increases by one per
 ///   write. Both resume from Alight's own previous snapshot file, so a relaunch
-///   never regresses the sequence; an unreadable file starts a new installId.
+///   never regresses the sequence; an unreadable file, or one whose sequence
+///   is not a safe integer, starts a new installId, as does reaching
+///   `maximumSequence`.
 /// - A provider whose facts fail the contract's ranges is exported as
 ///   `failed`/`parse_failed`. Nothing is clamped or guessed.
 /// - A build without a 40-hex source commit (an unbundled development run)
@@ -260,6 +337,10 @@ struct QuotaSnapshotExporter {
   static let fileName = "quota-snapshot.v1.json"
   /// Fieldbook's reader refuses larger files (design r2 §4.1).
   static let maximumBytes = 256 * 1024
+  /// JavaScript `Number.MAX_SAFE_INTEGER`. Fieldbook refuses a `sequence`
+  /// above it, so the exporter never writes one: at the bound it starts a new
+  /// `installId` at 0, which the reader cannot mistake for a regression.
+  static let maximumSequence = 9_007_199_254_740_991
 
   struct Input {
     let result: ProviderResult
@@ -280,6 +361,8 @@ struct QuotaSnapshotExporter {
   let fileURL: URL
   let producer: QuotaSnapshot.Producer?
   let antigravityEndpointRef: String?
+  /// Test seam for the durability step; `.system` in the app.
+  var directorySync: DirectorySync = .system
   private let makeInstallId: () -> String
   private var state: (installId: String, nextSequence: Int)?
 
@@ -315,19 +398,19 @@ struct QuotaSnapshotExporter {
         Self.logger.error("quota snapshot not written: \(data.count, privacy: .public) bytes exceeds the reader bound")
         return .failed("snapshot exceeds \(Self.maximumBytes) bytes")
       }
-      try Self.writeAtomically(data, to: fileURL)
+      try Self.writeAtomically(data, to: fileURL, directorySync: directorySync)
       return .written(sequence: sequence)
     } catch {
-      Self.logger.error("quota snapshot not written: \(String(describing: error), privacy: .public)")
+      Self.logger.error("quota snapshot write not completed: \(String(describing: error), privacy: .public)")
       return .failed(String(describing: error))
     }
   }
 
   private mutating func nextIdentity() -> (String, Int) {
-    if let state {
+    if let state, state.nextSequence <= Self.maximumSequence {
       return (state.installId, state.nextSequence)
     }
-    if let previous = Self.readPreviousIdentity(at: fileURL) {
+    if state == nil, let previous = Self.readPreviousIdentity(at: fileURL), previous.sequence < Self.maximumSequence {
       return (previous.installId, previous.sequence + 1)
     }
     return (makeInstallId(), 0)
@@ -370,14 +453,21 @@ struct QuotaSnapshotExporter {
       )
     }
 
-    guard result.ok, !result.windows.isEmpty else {
+    // A current attempt that says sign-in is required is exported as such even
+    // when the menu shows a last-good cached reading: the cache is history,
+    // and Fieldbook must keep the provider unknown with `auth_required`
+    // rather than read it as available (v1 rules 3 and 4). The menu keeps
+    // showing the cached windows with its sign-in prompt; only the export
+    // differs.
+    let authRequired = result.needsAuth || result.source == ClaudeUsageClient.signedOutSource
+    guard result.ok, !result.windows.isEmpty, !authRequired else {
       if result.source == "deferred" {
         return unavailable(.deferred, result.needsAuth ? .init(code: .authRequired, needsAuth: true) : nil)
       }
       if result.source == ClaudeUsageClient.refusedSource {
         return unavailable(.refused, .init(code: .refused, needsAuth: false))
       }
-      if result.needsAuth || result.source == ClaudeUsageClient.signedOutSource {
+      if authRequired {
         return unavailable(.signedOut, .init(code: .authRequired, needsAuth: true))
       }
       return unavailable(.failed, .init(code: result.failureCode ?? .unknown, needsAuth: false))
@@ -388,7 +478,7 @@ struct QuotaSnapshotExporter {
     guard let capturedAt, capturedAt.timeIntervalSince1970.isFinite,
       let report = result.quotaReport,
       let groups = exportGroups(report, provider: result.provider) else {
-      return unavailable(.failed, .init(code: .parseFailed, needsAuth: result.needsAuth))
+      return unavailable(.failed, .init(code: .parseFailed, needsAuth: false))
     }
     return QuotaSnapshot.ProviderEntry(
       provider: result.provider, status: .observed, attemptedAt: timestamp(input.attemptedAt),
@@ -481,7 +571,7 @@ struct QuotaSnapshotExporter {
 
   /// Fieldbook `isAntigravityPrimaryGroup` (`src/quota/pools.mjs`).
   static func fieldbookIsPrimaryGroup(_ displayName: String) -> Bool {
-    displayName.lowercased().contains("gemini")
+    UsageAccountRef.javaScriptLowercase(displayName).contains("gemini")
   }
 
   /// Fieldbook's group scope key: lowercase, each run of characters outside
@@ -489,7 +579,7 @@ struct QuotaSnapshotExporter {
   static func fieldbookGroupSlug(_ displayName: String) -> String {
     var slug = ""
     var inRun = false
-    for scalar in displayName.lowercased().unicodeScalars {
+    for scalar in UsageAccountRef.javaScriptLowercase(displayName).unicodeScalars {
       if ("a"..."z").contains(scalar) || ("0"..."9").contains(scalar) {
         slug.unicodeScalars.append(scalar)
         inRun = false
@@ -501,8 +591,11 @@ struct QuotaSnapshotExporter {
     return slug
   }
 
+  /// Fieldbook `isText`: non-empty after JavaScript `trim()`. Foundation's
+  /// whitespace set differs (it keeps U+FEFF), and a text field Fieldbook
+  /// finds blank would make it refuse the whole file.
   private static func isText(_ value: String) -> Bool {
-    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    !UsageAccountRef.javaScriptTrim(value).isEmpty
   }
 
   private static func isLowerHex(_ value: String, count: Int) -> Bool {
@@ -563,13 +656,34 @@ struct QuotaSnapshotExporter {
   }
 
   enum WriteError: Error, Equatable {
+    /// The write failed before the rename; the previous file is unchanged.
     case posix(String, Int32)
+    /// The new file was renamed into place, so readers may already see it,
+    /// but the directory entry could not be synced: the replacement may not
+    /// survive a crash. Reported, never ignored, so `written` always means
+    /// durable completion.
+    case directoryNotSynced(String, Int32)
+  }
+
+  /// The two POSIX calls that make the rename durable. A seam only so tests
+  /// can prove a failure is reported; production uses `.system`.
+  struct DirectorySync: Sendable {
+    /// Opens the directory for `fsync`; returns a descriptor or -1 with `errno`.
+    var open: @Sendable (String) -> Int32
+    /// Returns 0, or -1 with `errno`.
+    var fsync: @Sendable (Int32) -> Int32
+
+    static let system = DirectorySync(
+      open: { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) },
+      fsync: { Darwin.fsync($0) }
+    )
   }
 
   /// Temporary file in the target directory, `fsync`, `rename`, then `fsync`
   /// the directory, so a reader sees either the previous or the new complete
   /// file. `O_EXCL | O_NOFOLLOW` refuses a planted temporary path or symlink.
-  static func writeAtomically(_ data: Data, to url: URL) throws {
+  /// Throws `directoryNotSynced` when the final directory sync fails.
+  static func writeAtomically(_ data: Data, to url: URL, directorySync: DirectorySync = .system) throws {
     let directory = url.deletingLastPathComponent()
     try FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -600,11 +714,13 @@ struct QuotaSnapshotExporter {
     }
     guard rename(temporary.path, url.path) == 0 else { throw WriteError.posix("rename", errno) }
     renamed = true
-    let directoryFd = open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-    if directoryFd >= 0 {
-      // Durability of the rename itself; the file content is already synced.
-      _ = fsync(directoryFd)
-      close(directoryFd)
+    // Durability of the rename itself; the file content is already synced.
+    let directoryFd = directorySync.open(directory.path)
+    guard directoryFd >= 0 else { throw WriteError.directoryNotSynced("open", errno) }
+    defer { close(directoryFd) }
+    while directorySync.fsync(directoryFd) != 0 {
+      let code = errno
+      if code != EINTR { throw WriteError.directoryNotSynced("fsync", code) }
     }
   }
 
@@ -635,8 +751,10 @@ struct QuotaSnapshotExporter {
       CFGetTypeID(number) != CFBooleanGetTypeID() else {
       return nil
     }
+    // A value that is not an exact non-negative safe integer (negative,
+    // fractional, huge, or past the bound) is corrupt: start a new installId.
     let sequence = number.int64Value
-    guard Double(sequence) == number.doubleValue, sequence >= 0, sequence < 9_007_199_254_740_991 else { return nil }
+    guard Double(sequence) == number.doubleValue, sequence >= 0, sequence <= Int64(maximumSequence) else { return nil }
     return (installId, Int(sequence))
   }
 }
