@@ -9,17 +9,33 @@ struct CodexUsageClient: Sendable {
 
   func result(now: Date = Date()) async -> ProviderResult {
     do {
-      let (payload, identity) = try await fetchPayload()
+      let (payload, identity, accountRef) = try await fetchPayload()
       let windows = CodexUsageParser.windows(from: payload, now: now)
-      return ProviderResult(provider: .codex, ok: !windows.isEmpty, source: "live", error: nil, windows: windows, observationIdentity: identity)
+      var result = ProviderResult(provider: .codex, ok: !windows.isEmpty, source: "live", error: nil, windows: windows, observationIdentity: identity)
+      result.quotaReport = CodexUsageParser.quotaReport(from: payload)
+      result.accountRef = accountRef
+      result.failureCode = windows.isEmpty ? .parseFailed : nil
+      return result
     } catch {
       let needsAuth: Bool
       if case UsageError.missingToken = error { needsAuth = true } else { needsAuth = false }
-      return .failure(.codex, source: "error", error: CodexUsageClient.describe(error), needsAuth: needsAuth)
+      return .failure(
+        .codex, source: "error", error: CodexUsageClient.describe(error), needsAuth: needsAuth,
+        failureCode: CodexUsageClient.failureCode(error)
+      )
     }
   }
 
-  private func fetchPayload() async throws -> (UsagePayload, UsageObservationIdentity?) {
+  static func failureCode(_ error: Error) -> ProviderFailureCode {
+    switch error {
+    case UsageError.missingToken: .authRequired
+    case is URLError: .network
+    case is DecodingError: .parseFailed
+    default: .unknown
+    }
+  }
+
+  private func fetchPayload() async throws -> (UsagePayload, UsageObservationIdentity?, String?) {
     let auth = try readAuth()
     guard let token = auth.tokens?.accessToken, !token.isEmpty else {
       throw UsageError.missingToken
@@ -41,7 +57,9 @@ struct CodexUsageClient: Sendable {
     // Bind provenance to the exact auth snapshot sent above, never a later
     // credential read. Only a domain-separated digest reaches derived history.
     let identity = Self.observationIdentity(accountID: auth.tokens?.accountId, source: usageURL.absoluteString)
-    return (try JSONDecoder().decode(UsagePayload.self, from: data), identity)
+    let accountRef = UsageAccountRef.digest(
+      provider: .codex, organization: nil, identifier: auth.tokens?.accountId, kind: .opaque)
+    return (try JSONDecoder().decode(UsagePayload.self, from: data), identity, accountRef)
   }
 
   static func observationIdentity(accountID: String?, source: String) -> UsageObservationIdentity? {
@@ -74,6 +92,35 @@ enum CodexUsageParser {
   static func windows(from payload: UsagePayload, now: Date) -> [UsageWindow] {
     [payload.rateLimit.primaryWindow, payload.rateLimit.secondaryWindow]
       .compactMap { normalize($0, now: now) }
+  }
+
+  /// The same two slots, as reported: `used_percent` unclamped, the reported
+  /// reset and window length. Nil when a length is not a whole positive
+  /// number of seconds, so the export cannot name the window.
+  static func quotaReport(from payload: UsagePayload) -> QuotaReport? {
+    let slots: [(String, RateLimitWindow?)] = [
+      ("primary_window", payload.rateLimit.primaryWindow),
+      ("secondary_window", payload.rateLimit.secondaryWindow),
+    ]
+    var windows: [QuotaReportWindow] = []
+    for (slot, window) in slots {
+      guard let window else { continue }
+      let seconds = window.limitWindowSeconds
+      guard seconds.isFinite, seconds > 0, seconds <= 9_007_199_254_740_991, seconds.rounded() == seconds,
+        window.resetAt.isFinite else {
+        return nil
+      }
+      windows.append(QuotaReportWindow(
+        windowSeconds: Int(seconds),
+        windowSecondsSource: .provider,
+        usedPercentRaw: window.usedPercent,
+        usedPercentPrecision: .unverified,
+        resetAt: Date(timeIntervalSince1970: window.resetAt),
+        providerBucketId: slot,
+        scope: nil
+      ))
+    }
+    return windows.isEmpty ? nil : QuotaReport(groups: [QuotaReportGroup(providerGroup: nil, windows: windows)])
   }
 
   private static func normalize(_ window: RateLimitWindow?, now: Date) -> UsageWindow? {

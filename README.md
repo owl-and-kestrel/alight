@@ -90,6 +90,17 @@ Antigravity probe; use ordinary resource admission and cached dependencies when
 provider calls are out of scope. Mounting the real window and discoverable menu
 integration still require the separate UI custody and visual acceptance gates.
 
+### Quota snapshot export
+
+After every refresh Alight writes `quota-snapshot.v1.json` (schema
+`ok.alight.quota-snapshot.v1`) beside its private cache in
+`Application Support/Alight/`, atomically and with mode 0600. It carries each
+provider's reported windows unclamped, every Antigravity group (including the
+third-party models group), and failures as explicit statuses, with only
+domain-separated account and endpoint digests. Fieldbook reads this file, never
+`usage-cache.json`. The contract and field mapping are in
+[docs/quota-snapshot-v1.md](docs/quota-snapshot-v1.md).
+
 ### Claude Code usage
 
 Alight asks Claude Code itself. Each Claude poll runs, directly and without a shell:

@@ -28,9 +28,18 @@ final class UsageStore {
   // refresh above means two Claude polls never overlap.
   @ObservationIgnored private var claudeSchedule = ClaudePollSchedule()
 
-  init(history: UsageHistory = UsageHistory(), resultCache: UsageResultCache = UsageResultCache()) {
+  /// Writes `quota-snapshot.v1.json` after every refresh for Fieldbook and the
+  /// desk (`docs/quota-snapshot-v1.md`). Nil disables the export.
+  @ObservationIgnored private var quotaSnapshotExporter: QuotaSnapshotExporter?
+
+  init(
+    history: UsageHistory = UsageHistory(),
+    resultCache: UsageResultCache = UsageResultCache(),
+    quotaSnapshotExporter: QuotaSnapshotExporter? = QuotaSnapshotExporter()
+  ) {
     self.history = history
     self.resultCache = resultCache
+    self.quotaSnapshotExporter = quotaSnapshotExporter
   }
 
   @MainActor
@@ -116,6 +125,15 @@ final class UsageStore {
       generatedAt: completedAt,
       results: [reconciledCodex, reconciledClaude, reconciledAntigravity]
     )
+
+    // Every refresh is exported, failures included; the export never feeds
+    // back into the menu. `attemptedAt` is this refresh's start; a live
+    // reading's capture time is its own request's completion.
+    quotaSnapshotExporter?.export([
+      .init(result: reconciledCodex, attemptedAt: now, liveCapturedAt: rawCodex.1),
+      .init(result: reconciledClaude, attemptedAt: now, liveCapturedAt: claudeCapturedAt),
+      .init(result: reconciledAntigravity, attemptedAt: now, liveCapturedAt: rawAntigravity.1),
+    ])
   }
 
   private static func capture(_ operation: @Sendable () async -> ProviderResult) async -> (ProviderResult, Date) {
@@ -197,7 +215,8 @@ struct ClaudePollSchedule {
       source: "deferred",
       error: error,
       needsAuth: lastAttempt?.needsAuth ?? false,
-      observationIdentity: lastAttempt?.observationIdentity
+      observationIdentity: lastAttempt?.observationIdentity,
+      accountRef: lastAttempt?.accountRef
     )
   }
 }
@@ -297,7 +316,8 @@ struct UsageResultCache: Sendable {
       lastGood[result.provider] = CachedUsageReading(
         windows: result.windows,
         capturedAt: now,
-        sourceIdentity: sourceIdentity
+        sourceIdentity: sourceIdentity,
+        quotaReport: result.quotaReport
       )
       persist()
       return result
@@ -322,11 +342,17 @@ struct UsageResultCache: Sendable {
         source: result.source,
         error: Self.messageWithLastLive(result.error, age: age),
         needsAuth: result.needsAuth,
-        cacheAgeSeconds: age
+        cacheAgeSeconds: age,
+        accountRef: result.accountRef,
+        failureCode: result.failureCode
       )
     }
 
-    return ProviderResult(
+    // The export reads the reading's own facts and capture time, never the
+    // rebased display windows. Only windows still shown are exported. The
+    // account is the current attempt's: Claude's cache is reused only for that
+    // same account, and a failed Codex or Antigravity poll identifies none.
+    var cachedResult = ProviderResult(
       provider: result.provider,
       ok: true,
       source: "cached",
@@ -336,6 +362,21 @@ struct UsageResultCache: Sendable {
       cacheAgeSeconds: age,
       observationIdentity: result.observationIdentity
     )
+    cachedResult.quotaReport = cached.quotaReport.map { Self.unexpired($0, now: now) }
+    cachedResult.accountRef = result.accountRef
+    cachedResult.capturedAt = cached.capturedAt
+    return cachedResult
+  }
+
+  /// Drops reported windows whose reset has passed, as the display does. A
+  /// window with no reported reset cannot be shown to be expired and stays.
+  private static func unexpired(_ report: QuotaReport, now: Date) -> QuotaReport {
+    QuotaReport(groups: report.groups.map { group in
+      QuotaReportGroup(
+        providerGroup: group.providerGroup,
+        windows: group.windows.filter { $0.resetAt.map { $0 > now } ?? true }
+      )
+    })
   }
 
   /// Oldest cached reading that may still be shown while live polls fail.
@@ -432,6 +473,9 @@ private struct CachedUsageReading: Codable, Sendable {
   /// Provenance a reading must match to be reused: Antigravity's endpoint
   /// fingerprint, or Claude's account key. Nil for Codex.
   let sourceIdentity: String?
+  /// The reading's provider-reported facts for the quota snapshot export.
+  /// Optional, so caches written before the exporter still load.
+  var quotaReport: QuotaReport? = nil
 }
 
 private extension JSONEncoder {

@@ -56,7 +56,8 @@ struct AntigravityUsageClient: Sendable {
         .antigravity,
         source: "error",
         error: AntigravityUsageClient.describe(error),
-        needsAuth: needsAuth
+        needsAuth: needsAuth,
+        failureCode: AntigravityUsageClient.failureCode(error)
       )
     }
 
@@ -67,16 +68,19 @@ struct AntigravityUsageClient: Sendable {
         return .failure(
           .antigravity,
           source: "error",
-          error: "incomplete usage windows in response"
+          error: "incomplete usage windows in response",
+          failureCode: .parseFailed
         )
       }
-      return ProviderResult(
+      var result = ProviderResult(
         provider: .antigravity,
         ok: true,
         source: "live",
         error: nil,
         windows: windows
       )
+      result.quotaReport = AntigravityUsageParser.quotaReport(from: payload)
+      return result
     } catch {
       // A rate limit's Retry-After is part of the error text; Antigravity
       // polls every minute regardless.
@@ -90,8 +94,20 @@ struct AntigravityUsageClient: Sendable {
         .antigravity,
         source: "error",
         error: AntigravityUsageClient.describe(error),
-        needsAuth: needsAuth
+        needsAuth: needsAuth,
+        failureCode: AntigravityUsageClient.failureCode(error)
       )
+    }
+  }
+
+  static func failureCode(_ error: Error) -> ProviderFailureCode {
+    switch error {
+    case AntigravityError.notSignedIn, AntigravityError.tokenExpired: .authRequired
+    case AntigravityError.fetchFailed(401?, _): .authRequired
+    case AntigravityError.fetchFailed(429?, _): .rateLimited
+    case AntigravityError.fetchFailed(nil, _), is URLError: .network
+    case AntigravityError.malformed, is CocoaError: .parseFailed
+    default: .unknown
     }
   }
 
@@ -395,6 +411,77 @@ enum AntigravityUsageParser {
     }
 
     return windows
+  }
+
+  /// Every group and bucket the endpoint reported, verbatim, for the quota
+  /// snapshot export (design r2 A-1): the Gemini group and every secondary
+  /// group (3P models), including groups the menu does not draw. Unlike the
+  /// display path nothing is defaulted: a bucket without a remaining fraction
+  /// or with an unreadable reset makes the report nil, and a bucket whose
+  /// cadence is neither stated (`window`) nor named by its id is refused
+  /// rather than assumed to be five hours.
+  static func quotaReport(from payload: [String: Any]) -> QuotaReport? {
+    guard let rawGroups = payload["groups"] as? [[String: Any]], !rawGroups.isEmpty else {
+      return nil
+    }
+    var groups: [QuotaReportGroup] = []
+    for group in rawGroups {
+      guard let displayName = group["displayName"] as? String,
+        let buckets = group["buckets"] as? [[String: Any]] else {
+        return nil
+      }
+      var bucketIds: [String] = []
+      var windows: [QuotaReportWindow] = []
+      for bucket in buckets {
+        guard let bucketId = bucket["bucketId"] as? String, !bucketId.isEmpty,
+          let seconds = reportedWindowSeconds(bucket, bucketId: bucketId),
+          let fraction = numeric(bucket["remainingFraction"]) ?? numeric(bucket["remaining_fraction"]),
+          fraction.isFinite else {
+          return nil
+        }
+        var resetAt: Date?
+        if let resetValue = bucket["resetTime"] ?? bucket["reset_time"], !(resetValue is NSNull) {
+          guard let text = resetValue as? String, let parsed = parseISO(text) else { return nil }
+          resetAt = parsed
+        }
+        bucketIds.append(bucketId)
+        windows.append(QuotaReportWindow(
+          windowSeconds: seconds,
+          windowSecondsSource: .label,
+          // Unclamped: a negative remaining fraction is usage over the limit.
+          // Rounded to 6 decimals, as Fieldbook's direct Antigravity reader
+          // does, only to drop binary noise (0.7 → 30, not 30.000000000000004).
+          usedPercentRaw: ((1.0 - fraction) * 100.0 * 1_000_000).rounded() / 1_000_000,
+          usedPercentPrecision: .unverified,
+          resetAt: resetAt,
+          providerBucketId: bucketId,
+          scope: nil
+        ))
+      }
+      groups.append(QuotaReportGroup(
+        providerGroup: QuotaProviderGroup(displayName: displayName, bucketIds: bucketIds),
+        windows: windows
+      ))
+    }
+    return QuotaReport(groups: groups)
+  }
+
+  /// The window length a bucket states: its `window` field (`5h`, `weekly`)
+  /// or, failing that, its id's suffix (`-5h`, `-weekly`). Conflicting or
+  /// missing evidence gives nil.
+  private static func reportedWindowSeconds(_ bucket: [String: Any], bucketId: String) -> Int? {
+    func cadence(_ value: String) -> Int? {
+      switch value.lowercased() {
+      case "5h": 5 * 3600
+      case "weekly": 7 * 24 * 3600
+      default: nil
+      }
+    }
+    let fromWindow = (bucket["window"] as? String).flatMap(cadence)
+    let lowered = bucketId.lowercased()
+    let fromId: Int? = lowered.hasSuffix("-weekly") ? 7 * 24 * 3600 : lowered.hasSuffix("-5h") ? 5 * 3600 : nil
+    if let fromWindow, let fromId, fromWindow != fromId { return nil }
+    return fromWindow ?? fromId
   }
 
   static func hasCompleteBroadWindows(_ windows: [UsageWindow]) -> Bool {

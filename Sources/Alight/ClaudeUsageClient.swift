@@ -90,7 +90,10 @@ struct ClaudeUsageClient: Sendable {
     }
     let status = auth.failure == nil ? ClaudeAuthStatus.parse(auth.stdout) : nil
     if let status, !status.loggedIn {
-      return .failure(.claude, source: Self.signedOutSource, error: "not signed in to Claude Code", needsAuth: true)
+      return .failure(
+        .claude, source: Self.signedOutSource, error: "not signed in to Claude Code", needsAuth: true,
+        failureCode: .authRequired
+      )
     }
     let identity = status?.identity
     if identity == nil {
@@ -100,6 +103,7 @@ struct ClaudeUsageClient: Sendable {
     let usage = await run(executable, Self.usageArguments, environment: childEnvironment)
     var result = Self.result(from: usage, now: max(now, Date()))
     result.observationIdentity = identity
+    result.accountRef = status?.accountRef
     return result
   }
 
@@ -127,14 +131,17 @@ struct ClaudeUsageClient: Sendable {
     }
 
     do {
-      let windows = try ClaudeUsageParser.windows(fromCommandOutput: run.stdout, now: now)
-      return ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: windows)
+      let reading = try ClaudeUsageParser.reading(fromCommandOutput: run.stdout, now: now)
+      var result = ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: reading.windows)
+      result.quotaReport = reading.report
+      return result
     } catch ClaudeUsageParser.Failure.notJSON where run.status != 0 {
       // Usually a CLI that rejected its arguments. Its own first stderr line
       // is the most useful explanation.
       let detail = firstLine(of: run.stderr)
       if let detail, ClaudeUsageParser.mentionsSignIn(detail) {
-        return .failure(.claude, source: "error", error: "not signed in to Claude Code", needsAuth: true)
+        return .failure(
+          .claude, source: "error", error: "not signed in to Claude Code", needsAuth: true, failureCode: .authRequired)
       }
       if let detail, detail.localizedCaseInsensitiveContains("unknown option") {
         // An older CLI that lacks a flag Alight passes.
@@ -151,10 +158,11 @@ struct ClaudeUsageClient: Sendable {
         .claude,
         source: failure == .modelTurn ? refusedSource : "error",
         error: failure.message,
-        needsAuth: failure == .notSignedIn
+        needsAuth: failure == .notSignedIn,
+        failureCode: failure.exportCode
       )
     } catch {
-      return .failure(.claude, source: "error", error: "unexpected Claude Code /usage output")
+      return .failure(.claude, source: "error", error: "unexpected Claude Code /usage output", failureCode: .parseFailed)
     }
   }
 
@@ -240,6 +248,9 @@ struct ClaudeAuthStatus: Equatable {
   /// Nil when the account cannot be identified. Readings without an identity
   /// are shown live but never cached.
   let identity: UsageObservationIdentity?
+  /// Fieldbook `usageAccountRef` of the same email and organization, for the
+  /// quota snapshot export. Nil exactly when `identity` is.
+  var accountRef: String? = nil
 
   private struct Payload: Decodable {
     let loggedIn: Bool
@@ -255,9 +266,12 @@ struct ClaudeAuthStatus: Equatable {
     guard payload.loggedIn else {
       return ClaudeAuthStatus(loggedIn: false, identity: nil)
     }
+    let identity = observationIdentity(email: payload.email, orgId: payload.orgId, subscriptionType: payload.subscriptionType)
     return ClaudeAuthStatus(
       loggedIn: true,
-      identity: observationIdentity(email: payload.email, orgId: payload.orgId, subscriptionType: payload.subscriptionType)
+      identity: identity,
+      accountRef: identity == nil ? nil : UsageAccountRef.digest(
+        provider: .claude, organization: payload.orgId, identifier: payload.email, kind: .email)
     )
   }
 
@@ -324,6 +338,16 @@ enum ClaudeUsageParser {
       case .unrecognizedLine(let label): "unrecognized Claude Code usage line: \(label)"
       }
     }
+
+    /// The quota snapshot's closed failure code for this failure.
+    var exportCode: ProviderFailureCode {
+      switch self {
+      case .notSignedIn: .authRequired
+      case .modelTurn: .refused
+      case .notJSON, .unexpectedShape, .notUsageCommand, .noLimits, .unrecognizedLine: .parseFailed
+      case .commandFailed, .noPlanLimits: .unknown
+      }
+    }
   }
 
   private struct CommandResult: Decodable {
@@ -344,7 +368,19 @@ enum ClaudeUsageParser {
     }
   }
 
+  /// Display windows plus the provider-reported facts behind them (see
+  /// `QuotaReport`). The report is nil when a reported value cannot be
+  /// exported unclamped (a `left` figure above 100).
+  struct Reading {
+    let windows: [UsageWindow]
+    let report: QuotaReport?
+  }
+
   static func windows(fromCommandOutput data: Data, now: Date) throws -> [UsageWindow] {
+    try reading(fromCommandOutput: data, now: now).windows
+  }
+
+  static func reading(fromCommandOutput data: Data, now: Date) throws -> Reading {
     guard (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else {
       throw Failure.notJSON
     }
@@ -367,11 +403,17 @@ enum ClaudeUsageParser {
     guard command.localCommand == "usage" else {
       throw Failure.notUsageCommand
     }
-    return try windows(fromText: text, now: now)
+    return try reading(fromText: text, now: now)
   }
 
   static func windows(fromText text: String, now: Date) throws -> [UsageWindow] {
+    try reading(fromText: text, now: now).windows
+  }
+
+  static func reading(fromText text: String, now: Date) throws -> Reading {
     var windows: [UsageWindow] = []
+    var reported: [QuotaReportWindow] = []
+    var reportValid = true
     var seen: Set<String> = []
     for rawLine in text.split(whereSeparator: \.isNewline) {
       let line = rawLine.trimmingCharacters(in: .whitespaces)
@@ -391,8 +433,9 @@ enum ClaudeUsageParser {
       guard let kind = LineKind(label: label), let percent, let number = Double(percent.1), number.isFinite else {
         throw Failure.unrecognizedLine(label)
       }
-      let used = percent.2.lowercased() == "used" ? number : 100 - number
-      let window = try window(
+      let reportsUsed = percent.2.lowercased() == "used"
+      let used = reportsUsed ? number : 100 - number
+      let (window, report) = try window(
         kind: kind,
         label: label,
         usedPercent: min(100, max(0, used)),
@@ -402,6 +445,22 @@ enum ClaudeUsageParser {
       // First occurrence wins so duplicates stay deterministic.
       if seen.insert(window.id).inserted {
         windows.append(window)
+        // The export keeps the printed figure unclamped. Claude Code prints
+        // `floor(utilization)% used`, so a whole `used` figure is a floor; a
+        // `left` figure or a decimal has no proven rounding.
+        if used.isFinite, used >= 0 {
+          reported.append(QuotaReportWindow(
+            windowSeconds: report.windowSeconds,
+            windowSecondsSource: .label,
+            usedPercentRaw: used,
+            usedPercentPrecision: reportsUsed && !percent.1.contains(".") ? .floorInteger : .unverified,
+            resetAt: report.resetAt,
+            providerBucketId: nil,
+            scope: window.scope
+          ))
+        } else {
+          reportValid = false
+        }
       }
     }
     guard windows.contains(where: { $0.scope == nil }) else {
@@ -410,7 +469,8 @@ enum ClaudeUsageParser {
       if text.range(of: "Total cost:", options: .caseInsensitive) != nil { throw Failure.noPlanLimits }
       throw Failure.noLimits
     }
-    return windows
+    let report = reportValid ? QuotaReport(groups: [QuotaReportGroup(providerGroup: nil, windows: reported)]) : nil
+    return Reading(windows: windows, report: report)
   }
 
   static func mentionsSignIn(_ text: String) -> Bool {
@@ -455,7 +515,11 @@ enum ClaudeUsageParser {
     }
   }
 
-  private static func window(kind: LineKind, label: String, usedPercent: Double, rest: String, now: Date) throws -> UsageWindow {
+  /// The display window, plus the reported length and reset for the export:
+  /// the reset as printed (nil when Claude Code printed none), before the
+  /// display substitutes a fresh window for a missing or passed reset.
+  private static func window(kind: LineKind, label: String, usedPercent: Double, rest: String, now: Date) throws
+    -> (UsageWindow, (windowSeconds: Int, resetAt: Date?)) {
     let duration: TimeInterval
     var scope: UsageScope?
     var style = UsageVisualStyle.hand
@@ -480,11 +544,13 @@ enum ClaudeUsageParser {
 
     var used = usedPercent
     var resetAt: Date
+    var reportedReset: Date?
     if let clause = resetClause(in: rest) {
       guard let parsed = ClaudeResetTime.parse(clause, now: now) else {
         throw Failure.unrecognizedLine(label)
       }
       resetAt = parsed
+      reportedReset = parsed
     } else if used == 0 {
       // Claude Code omits the reset of a window that has not started; an
       // unused window is a fresh one.
@@ -505,7 +571,7 @@ enum ClaudeUsageParser {
       resetAt = now.addingTimeInterval(duration)
     }
 
-    return PressureMath.window(
+    let window = PressureMath.window(
       provider: .claude,
       speed: kind.isSession ? .fast : .slow,
       usedPercent: used,
@@ -515,6 +581,7 @@ enum ClaudeUsageParser {
       scope: scope,
       visualStyle: style
     )
+    return (window, (Int(duration), reportedReset))
   }
 
   private static func resetClause(in value: String) -> String? {

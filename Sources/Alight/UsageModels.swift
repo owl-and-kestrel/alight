@@ -208,6 +208,17 @@ struct ProviderResult: Sendable {
   /// it to decide whether a last-known reading still belongs to this account.
   /// This grants no authority.
   var observationIdentity: UsageObservationIdentity? = nil
+  /// Provider-reported facts behind `windows`, unclamped and with no invented
+  /// defaults, for the quota snapshot export. Nil when they could not be
+  /// exported honestly, or for a reading cached before the exporter existed.
+  var quotaReport: QuotaReport? = nil
+  /// Fieldbook `usageAccountRef` digest of the account this reading belongs
+  /// to, from the same auth snapshot as the request. Never a raw identifier.
+  var accountRef: String? = nil
+  /// Why a failed poll failed, in the export's closed vocabulary.
+  var failureCode: ProviderFailureCode? = nil
+  /// When a cached reading was taken. Set by the cache; never rebased.
+  var capturedAt: Date? = nil
 
   var cacheAgeDisplay: String? {
     cacheAgeSeconds.map(Self.compactDuration)
@@ -229,7 +240,9 @@ struct ProviderResult: Sendable {
     error: String,
     needsAuth: Bool = false,
     cacheAgeSeconds: TimeInterval? = nil,
-    observationIdentity: UsageObservationIdentity? = nil
+    observationIdentity: UsageObservationIdentity? = nil,
+    accountRef: String? = nil,
+    failureCode: ProviderFailureCode? = nil
   ) -> ProviderResult {
     ProviderResult(
       provider: provider,
@@ -239,7 +252,9 @@ struct ProviderResult: Sendable {
       windows: [],
       needsAuth: needsAuth,
       cacheAgeSeconds: cacheAgeSeconds,
-      observationIdentity: observationIdentity
+      observationIdentity: observationIdentity,
+      accountRef: accountRef,
+      failureCode: failureCode
     )
   }
 
