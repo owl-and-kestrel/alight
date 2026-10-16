@@ -205,7 +205,10 @@ struct AntigravityCredentialResolutionTests {
     )
     #expect(credential.accessToken == "a-token")
     #expect(credential.expiresAt != nil)
-    #expect(Mirror(reflecting: credential).children.map(\.label) == ["accessToken", "expiresAt"])
+    // The only fields held: the access token, its expiry, and the (non-secret)
+    // account subject from the id_token. No refresh token.
+    #expect(Mirror(reflecting: credential).children.map(\.label) == ["accessToken", "expiresAt", "accountSubject"])
+    #expect(!String(describing: credential).contains("must-be-ignored"))
   }
 
   @Test("expired and rejected sessions tell the user to run agy and ask for sign-in")

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Reads Antigravity credentials and polls Google Cloud Code PA's
@@ -77,9 +78,12 @@ struct AntigravityUsageClient: Sendable {
         ok: true,
         source: "live",
         error: nil,
-        windows: windows
+        windows: windows,
+        observationIdentity: Self.observationIdentity(subject: credential.accountSubject, source: usageURL.absoluteString)
       )
       result.quotaReport = AntigravityUsageParser.quotaReport(from: payload)
+      result.accountRef = UsageAccountRef.digest(
+        provider: .antigravity, organization: nil, identifier: credential.accountSubject, kind: .opaque)
       return result
     } catch {
       // A rate limit's Retry-After is part of the error text; Antigravity
@@ -270,8 +274,33 @@ struct AntigravityUsageClient: Sendable {
 
     return AntigravityCredential(
       accessToken: accessToken,
-      expiresAt: expiresAt
+      expiresAt: expiresAt,
+      accountSubject: (root["id_token"] as? String).flatMap(googleSubject)
     )
+  }
+
+  /// The `sub` claim of a Google `id_token`, read without verifying its
+  /// signature: it comes from the same local file as the access token and
+  /// only partitions history by account. Anything that is not a Google token
+  /// with a subject gives nil (readings then stay unjoined, as before).
+  static func googleSubject(fromIDToken token: String) -> String? {
+    let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 3 else { return nil }
+    var base64 = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+    guard let data = Data(base64Encoded: base64),
+      let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let issuer = claims["iss"] as? String, ["https://accounts.google.com", "accounts.google.com"].contains(issuer),
+      let subject = (claims["sub"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !subject.isEmpty
+    else { return nil }
+    return subject
+  }
+
+  /// Continuity identity for a Google account, as Codex's is for its account.
+  static func observationIdentity(subject: String?, source: String) -> UsageObservationIdentity? {
+    guard let subject, !subject.isEmpty else { return nil }
+    let digest = SHA256.hash(data: Data("alight.usage-account.v1\u{0}antigravity\u{0}\(subject)".utf8))
+    return UsageObservationIdentity(source: source, accountPartition: digest.map { String(format: "%02x", $0) }.joined(), limitIdentity: nil)
   }
 
   private static func firstToken(in contents: String) -> String? {
@@ -364,6 +393,10 @@ struct AntigravityUsageClient: Sendable {
 struct AntigravityCredential: Sendable {
   let accessToken: String
   let expiresAt: Date?
+  /// The Google account (`sub`) of the `id_token` saved with this access
+  /// token, when the credential file has one. Used only to keep one
+  /// account's readings together (hashed); never for authorization.
+  var accountSubject: String? = nil
 }
 
 enum AntigravityError: Error {

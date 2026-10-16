@@ -93,9 +93,12 @@ struct UsageHistory: Sendable {
       }
       // Unverified accounts get isolated points. Reset, source, account,
       // duration, reported limit changes, decreases, and long gaps break lines.
+      // A window with nothing used has not started: its reported reset moves
+      // with the clock (Antigravity), so a changed reset after an unused
+      // reading is the same window, not a reset.
       let continuous = previous.map {
         !clockDiscontinuities.contains(window.id) && identity != nil && $0.identity == identity &&
-          $0.window.resetAt == window.resetAt &&
+          ($0.window.resetAt == window.resetAt || $0.window.usedPercent == 0) &&
           $0.window.limitWindowSeconds == window.limitWindowSeconds &&
           window.usedPercent >= $0.window.usedPercent &&
           capturedAt.timeIntervalSince($0.capturedAt) <= UsageForecast.maximumGap
