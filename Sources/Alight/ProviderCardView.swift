@@ -19,10 +19,13 @@ struct ProviderCardView: View {
   var onReorderChanged: ((CGFloat) -> Void)? = nil
   var onReorderEnded: (() -> Void)? = nil
 
+  /// The element being edited in Customize, outlined in the preview.
+  var highlightedElement: UUID? = nil
+
   @State private var isReordering = false
 
   private var windows: [UsageWindow] {
-    (result?.windows ?? []).filter { !card.hiddenWindowIDs.contains($0.id) }.sorted(by: DashboardCard.displayOrder)
+    (result?.windows ?? []).sorted(by: DashboardCard.displayOrder)
   }
 
   var body: some View {
@@ -31,11 +34,16 @@ struct ProviderCardView: View {
       if windows.isEmpty {
         emptyState
       } else {
-        ForEach(card.visibleElements, id: \.self) { element in
-          switch element {
-          case .meters: meters
-          case .history: historyChart
-          case .forecast: forecast
+        ForEach(card.elements.filter(\.enabled)) { element in
+          let shown = card.windows(windows, for: element)
+          if !shown.isEmpty {
+            elementView(element, windows: shown)
+              .id(element.id)
+              .padding(highlightedElement == element.id ? 6 : 0)
+              .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                  .strokeBorder(color.opacity(highlightedElement == element.id ? 0.9 : 0), lineWidth: 1.5)
+              )
           }
         }
       }
@@ -54,6 +62,14 @@ struct ProviderCardView: View {
       moveCommands
       Divider()
       Button("Remove Card", role: .destructive, action: onRemove)
+    }
+  }
+
+  @ViewBuilder private func elementView(_ element: CardElement, windows: [UsageWindow]) -> some View {
+    switch element.kind {
+    case .meters: meters(element, windows: windows)
+    case .chart: chart(element, windows: windows)
+    case .runway: runway(element, windows: windows)
     }
   }
 
@@ -122,53 +138,55 @@ struct ProviderCardView: View {
       .fixedSize(horizontal: false, vertical: true)
   }
 
-  // MARK: Meters
+  // MARK: Elements
 
-  private var meters: some View {
+  private func meters(_ element: CardElement, windows: [UsageWindow]) -> some View {
     VStack(spacing: 12) {
       ForEach(windows) { window in
-        MeterRow(
-          window: window,
-          style: card.valueStyle,
-          color: color,
-          showsPaceMarker: card.showsPaceMarker,
-          showsCountdown: card.showsCountdown,
-          now: now
-        )
+        MeterRow(window: window, label: card.label(for: window), element: element, color: color, now: now)
       }
     }
   }
 
-  // MARK: History
-
-  @ViewBuilder private var historyChart: some View {
+  @ViewBuilder private func chart(_ element: CardElement, windows: [UsageWindow]) -> some View {
     let data = HistoryChartData.make(
       observations: history.observations,
       windows: windows,
-      range: card.historyRange,
-      style: card.valueStyle,
+      range: element.range,
+      style: element.valueStyle,
       now: now
     )
     if data.isEmpty {
-      Text("No live history in the last \(card.historyRange.title) yet.")
+      Text("No live history for \(windows.map(card.label).joined(separator: ", ")) in the last \(element.range.title).")
         .font(.caption).foregroundStyle(.secondary)
     } else {
-      HistoryChartView(data: data, windows: windows, color: color, style: card.valueStyle, showsPaceGuide: card.showsPaceGuide)
+      HistoryChartView(
+        data: data,
+        windows: windows,
+        labels: Dictionary(uniqueKeysWithValues: windows.map { ($0.id, card.label(for: $0)) }),
+        color: color,
+        element: element
+      )
     }
   }
 
-  // MARK: Forecast
-
-  private var forecast: some View {
+  private func runway(_ element: CardElement, windows: [UsageWindow]) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       ForEach(windows) { window in
         let forecast = UsageForecast(
           window: window, identity: result?.observationIdentity, observations: history.observations, now: now
         )
         HStack(alignment: .firstTextBaseline) {
-          Text(window.label).font(.caption.weight(.medium))
+          Text(card.label(for: window)).font(.caption.weight(.medium))
           Spacer()
-          RunwayText(forecast: forecast, now: now)
+          RunwayText(forecast: forecast, now: now, showsProjectionAtReset: element.showsProjectionAtReset)
+        }
+        if element.showsSustainablePace, let sustainable = forecast.sustainablePointsPerHour {
+          HStack {
+            Spacer()
+            Text("sustainable ≈\(sustainable.formatted(.number.precision(.fractionLength(1)))) pts/h")
+              .font(.caption2).foregroundStyle(.secondary)
+          }
         }
       }
     }
@@ -213,22 +231,23 @@ private struct ReorderHandle: ViewModifier {
   }
 }
 
-/// Label, big number, bar with pace marker, then pace and reset details.
+/// Label, big number, bar with pace marker, then pace and reset details,
+/// each as the element configures it.
 struct MeterRow: View {
   let window: UsageWindow
-  let style: CardValueStyle
+  let label: String
+  let element: CardElement
   let color: Color
-  let showsPaceMarker: Bool
-  let showsCountdown: Bool
   let now: Date
 
+  private var style: CardValueStyle { element.valueStyle }
   private var value: Double { style.value(usedPercent: window.usedPercent) }
   private var paceValue: Double { style.value(usedPercent: 100 - window.expectedRemainingPercent) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .firstTextBaseline, spacing: 4) {
-        Text(window.label).font(.subheadline.weight(.medium))
+        Text(label).font(.subheadline.weight(.medium))
         Spacer()
         Text("\(Int(value.rounded()))%")
           .font(.system(.title3, design: .rounded).weight(.semibold))
@@ -236,14 +255,18 @@ struct MeterRow: View {
           .contentTransition(.numericText(value: value))
         Text(style == .remaining ? "left" : "used").font(.caption).foregroundStyle(.secondary)
       }
-      MeterBar(fraction: value / 100, pace: showsPaceMarker ? paceValue / 100 : nil, color: color)
-      if showsPaceMarker || showsCountdown {
+      MeterBar(
+        fraction: value / 100,
+        pace: element.showsPaceMarker ? paceValue / 100 : nil,
+        color: color,
+        thickness: element.barThickness.points
+      )
+      if element.showsPaceStatus || element.reset != .hidden {
         HStack(spacing: 6) {
-          if showsPaceMarker { PaceLabel(window: window) }
+          if element.showsPaceStatus { PaceLabel(window: window) }
           Spacer(minLength: 4)
-          if showsCountdown {
-            Text("resets in \(window.resetCountdown(now: now))")
-              .help(window.resetAt.formatted(.dateTime.weekday(.wide).hour().minute()))
+          if let reset = resetText {
+            Text(reset).help(window.resetAt.formatted(.dateTime.weekday(.wide).hour().minute()))
           }
         }
         .font(.caption)
@@ -251,6 +274,17 @@ struct MeterRow: View {
       }
     }
     .animation(.smooth, value: value)
+  }
+
+  private var resetText: String? {
+    let countdown = "resets in \(window.resetCountdown(now: now))"
+    let time = "resets \(window.resetAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
+    switch element.reset {
+    case .countdown: return countdown
+    case .time: return time
+    case .both: return "\(countdown) · \(window.resetAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
+    case .hidden: return nil
+    }
   }
 }
 
@@ -260,6 +294,7 @@ struct MeterBar: View {
   let fraction: Double
   let pace: Double?
   let color: Color
+  var thickness: CGFloat = 8
 
   var body: some View {
     GeometryReader { proxy in
@@ -279,7 +314,7 @@ struct MeterBar: View {
         }
       }
     }
-    .frame(height: 8)
+    .frame(height: thickness)
     .padding(.vertical, 3)
     .accessibilityElement()
     .accessibilityValue("\(Int((clamp(fraction) * 100).rounded())) percent")
@@ -324,6 +359,7 @@ struct PaceLabel: View {
 struct RunwayText: View {
   let forecast: UsageForecast
   let now: Date
+  var showsProjectionAtReset = true
 
   var body: some View {
     Group {
@@ -333,7 +369,7 @@ struct RunwayText: View {
           systemImage: "exclamationmark.triangle.fill"
         )
         .foregroundStyle(.primary)
-      } else if let projection = forecast.projection(at: forecast.window.resetAt) {
+      } else if showsProjectionAtReset, let projection = forecast.projection(at: forecast.window.resetAt) {
         Text("≈\(Int(projection.remainingPercent.rounded()))% left at reset")
       } else if let reason = forecast.unavailable {
         Text(Self.shortReason(reason)).help(reason.guidance)
@@ -362,28 +398,41 @@ struct RunwayText: View {
 struct HistoryChartView: View {
   let data: HistoryChartData
   let windows: [UsageWindow]
+  /// The card's names for the windows, by id.
+  let labels: [String: String]
   let color: Color
-  let style: CardValueStyle
-  let showsPaceGuide: Bool
+  let element: CardElement
 
   @State private var selection: Date?
 
-  private var labels: [String] { windows.map(\.label) }
+  private var style: CardValueStyle { element.valueStyle }
+  private var legendLabels: [String] { windows.map { label(for: $0.id) } }
   private var shades: [Color] {
     windows.indices.map { index in color.opacity([1, 0.62, 0.4, 0.28][min(index, 3)]) }
   }
   private var primaryID: String? { windows.first?.id }
+  private var showsLabels: Bool { element.showsLabels && windows.count > 1 }
 
-  private var hourStride: Int {
-    switch data.domain.lowerBound.distance(to: data.domain.upperBound) {
-    case ...(6 * 3600): 2
-    case ...(24 * 3600): 6
-    default: 24
+  private var interpolation: InterpolationMethod {
+    switch element.curve {
+    case .smooth: .monotone
+    case .straight: .linear
+    case .steps: .stepEnd
+    }
+  }
+
+  /// Hour ticks for ranges up to a day; day ticks beyond.
+  private var axisStride: (component: Calendar.Component, count: Int, daily: Bool) {
+    switch element.range {
+    case .sixHours: (.hour, 2, false)
+    case .day: (.hour, 6, false)
+    case .threeDays, .week: (.day, 1, true)
+    case .twoWeeks: (.day, 2, true)
     }
   }
 
   private func label(for windowID: String) -> String {
-    windows.first { $0.id == windowID }?.label ?? windowID
+    labels[windowID] ?? windows.first { $0.id == windowID }?.label ?? windowID
   }
 
   var body: some View {
@@ -392,7 +441,7 @@ struct HistoryChartView: View {
     let latest = Dictionary(grouping: data.points, by: \.windowID).compactMapValues { $0.max { $0.date < $1.date } }
 
     Chart {
-      if showsPaceGuide {
+      if element.showsPaceGuide {
         // Only the first limit's guide: one per expired short window clutters.
         ForEach(data.guides.filter { $0.windowID == primaryID }) { guide in
           ForEach([guide.start, guide.end]) { point in
@@ -407,16 +456,16 @@ struct HistoryChartView: View {
         }
       }
 
-      ForEach(data.points.filter { $0.windowID == primaryID && areaSizes[$0.area, default: 0] > 1 }) { point in
+      ForEach(data.points.filter { element.showsArea && $0.windowID == primaryID && areaSizes[$0.area, default: 0] > 1 }) { point in
         AreaMark(
           x: .value("Time", point.date),
           yStart: .value("Base", 0),
           yEnd: .value("Percent", point.value),
           series: .value("Series", point.area)
         )
-        .interpolationMethod(.monotone)
+        .interpolationMethod(interpolation)
         .foregroundStyle(
-          LinearGradient(colors: [color.opacity(0.32), color.opacity(0.02)], startPoint: .top, endPoint: .bottom)
+          LinearGradient(colors: [color.opacity(0.24), color.opacity(0.02)], startPoint: .top, endPoint: .bottom)
         )
       }
 
@@ -426,7 +475,7 @@ struct HistoryChartView: View {
           y: .value("Percent", point.value),
           series: .value("Series", point.series)
         )
-        .interpolationMethod(.monotone)
+        .interpolationMethod(interpolation)
         .foregroundStyle(by: .value("Limit", label(for: point.windowID)))
         .lineStyle(StrokeStyle(lineWidth: point.windowID == primaryID ? 2 : 1.5, lineCap: .round, lineJoin: .round))
 
@@ -445,7 +494,7 @@ struct HistoryChartView: View {
           .foregroundStyle(by: .value("Limit", label(for: point.windowID)))
           .symbolSize(36)
           .annotation(position: .trailing, alignment: .center, spacing: 4) {
-            if windows.count > 1 {
+            if showsLabels {
               Text(label(for: point.windowID)).font(.caption2).foregroundStyle(Color.secondary)
             }
           }
@@ -460,7 +509,7 @@ struct HistoryChartView: View {
           }
       }
     }
-    .chartForegroundStyleScale(domain: labels, range: shades)
+    .chartForegroundStyleScale(domain: legendLabels, range: shades)
     .chartXScale(domain: data.domain)
     .chartYScale(domain: 0...100)
     .chartYAxis {
@@ -471,17 +520,20 @@ struct HistoryChartView: View {
       }
     }
     .chartXAxis {
-      AxisMarks(values: .stride(by: .hour, count: hourStride)) { _ in
+      AxisMarks(values: .stride(by: axisStride.component, count: axisStride.count)) { _ in
         AxisTick(length: 3).foregroundStyle(Color.primary.opacity(0.2))
-        AxisValueLabel(format: .dateTime.hour(), collisionResolution: .greedy(minimumSpacing: 6))
-          .font(.caption2).foregroundStyle(Color.secondary)
+        AxisValueLabel(
+          format: axisStride.daily ? .dateTime.weekday(.abbreviated) : .dateTime.hour(),
+          collisionResolution: .greedy(minimumSpacing: 6)
+        )
+        .font(.caption2).foregroundStyle(Color.secondary)
       }
     }
-    .chartLegend(windows.count > 1 ? .visible : .hidden)
+    .chartLegend(showsLabels ? .visible : .hidden)
     .chartLegend(position: .top, alignment: .leading, spacing: 6)
     .chartXSelection(value: $selection)
-    .chartPlotStyle { $0.padding(.trailing, windows.count > 1 ? 34 : 4) }
-    .frame(height: 128)
+    .chartPlotStyle { $0.padding(.trailing, showsLabels ? 34 : 4) }
+    .frame(height: element.height.points)
     .accessibilityLabel("\(style.title) percentage over the last \(data.domain.lowerBound.distance(to: data.domain.upperBound) / 3600) hours")
   }
 

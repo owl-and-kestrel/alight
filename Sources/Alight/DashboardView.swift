@@ -294,7 +294,8 @@ enum CardReorder {
 }
 
 /// A card's settings, shown in place of the list, under a live preview of
-/// the card so every change shows as it is made.
+/// the card so every change shows as it is made. The card page lists its
+/// elements and limits; an element page holds that element's settings.
 struct CardCustomizeView: View {
   static let settingsHeight: CGFloat = 330
 
@@ -307,93 +308,303 @@ struct CardCustomizeView: View {
   let onDone: () -> Void
   let onRemove: () -> Void
 
+  static let maximumPreviewHeight: CGFloat = 340
+
+  @State private var editing: UUID?
+  @State private var previewHeight: CGFloat = 0
+
+  init(
+    card: Binding<DashboardCard>, availableWindows: [UsageWindow], color: Color, result: ProviderResult?,
+    history: UsageHistory, now: Date, editing: UUID? = nil, onDone: @escaping () -> Void, onRemove: @escaping () -> Void
+  ) {
+    _card = card
+    self.availableWindows = availableWindows
+    self.color = color
+    self.result = result
+    self.history = history
+    self.now = now
+    self.onDone = onDone
+    self.onRemove = onRemove
+    _editing = State(initialValue: editing)
+  }
+
   var body: some View {
     VStack(spacing: 0) {
-      HStack {
-        Button(action: onDone) {
-          Label("Cards", systemImage: "chevron.left")
-        }
-        .buttonStyle(.borderless)
-        Spacer()
-        HStack(spacing: 6) {
-          Circle().fill(color).frame(width: 8, height: 8)
-          Text(card.provider.displayName).font(.headline)
-        }
-        Spacer()
-        Button("Done", action: onDone).keyboardShortcut(.defaultAction).controlSize(.small)
-      }
-      .padding(.horizontal, 14)
-      .padding(.vertical, 10)
+      titleBar
+      Divider()
+      preview
       Divider()
 
-      ProviderCardView(card: card, result: result, history: history, color: color, now: now)
-        .allowsHitTesting(false)
-        .animation(.snappy, value: card)
-        .padding(12)
-        .accessibilityLabel("Preview of the \(card.provider.displayName) card")
-      Divider()
-
-      Form {
-        Section("Show, in this order") {
-          ForEach(Array(card.elements.enumerated()), id: \.element.kind) { index, element in
-            HStack {
-              Toggle(isOn: Binding(
-                get: { card.elements[index].enabled },
-                set: { card.elements[index].enabled = $0 }
-              )) {
-                Label(element.kind.title, systemImage: element.kind.systemImage)
+      Group {
+        if let editing, let index = card.elements.firstIndex(where: { $0.id == editing }) {
+          ElementSettingsForm(
+            element: $card.elements[index],
+            windows: availableWindows,
+            label: card.label(for:),
+            onDelete: {
+              withAnimation(.snappy) {
+                self.editing = nil
+                card.elements.remove(at: index)
               }
-              Spacer()
-              Button { moveElement(index, by: -1) } label: { Image(systemName: "chevron.up") }
-                .disabled(index == 0)
-              Button { moveElement(index, by: 1) } label: { Image(systemName: "chevron.down") }
-                .disabled(index == card.elements.count - 1)
             }
-            .buttonStyle(.borderless)
-          }
-        }
-
-        Section("Limits") {
-          if availableWindows.isEmpty {
-            Text("No limits reported yet.").foregroundStyle(.secondary)
-          }
-          ForEach(availableWindows) { window in
-            Toggle(window.label, isOn: Binding(
-              get: { !card.hiddenWindowIDs.contains(window.id) },
-              set: { shown in
-                if shown { card.hiddenWindowIDs.remove(window.id) } else { card.hiddenWindowIDs.insert(window.id) }
-              }
-            ))
-          }
-          Picker("Count", selection: $card.valueStyle) {
-            ForEach(CardValueStyle.allCases, id: \.self) { Text($0.title).tag($0) }
-          }
-          .pickerStyle(.segmented)
-          Toggle("Pace marker and status", isOn: $card.showsPaceMarker)
-          Toggle("Reset countdown", isOn: $card.showsCountdown)
-        }
-
-        Section("History") {
-          Picker("Range", selection: $card.historyRange) {
-            ForEach(HistoryRange.allCases, id: \.self) { Text($0.title).tag($0) }
-          }
-          .pickerStyle(.segmented)
-          Toggle("On-pace guide", isOn: $card.showsPaceGuide)
-        }
-
-        Section {
-          Button("Remove Card", role: .destructive, action: onRemove)
+          )
+          .transition(.move(edge: .trailing).combined(with: .opacity))
+        } else {
+          cardForm.transition(.move(edge: .leading).combined(with: .opacity))
         }
       }
-      .formStyle(.grouped)
-      .scrollContentBackground(.hidden)
       .frame(height: Self.settingsHeight)
+      .clipped()
     }
+  }
+
+  /// The card as it will look, scrolled to the element being edited when the
+  /// card is taller than the space for it.
+  private var preview: some View {
+    ScrollViewReader { proxy in
+      ScrollView {
+        ProviderCardView(card: card, result: result, history: history, color: color, now: now, highlightedElement: editing)
+          .allowsHitTesting(false)
+          .animation(.snappy, value: card)
+          .animation(.snappy, value: editing)
+          .padding(12)
+          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { previewHeight = $0 }
+          .accessibilityLabel("Preview of the \(card.provider.displayName) card")
+      }
+      .frame(height: min(max(previewHeight, 60), Self.maximumPreviewHeight))
+      .onChange(of: editing, initial: true) { _, element in
+        guard let element else { return }
+        withAnimation(.snappy) { proxy.scrollTo(element, anchor: .center) }
+      }
+    }
+  }
+
+  private var titleBar: some View {
+    HStack {
+      Button {
+        withAnimation(.snappy) {
+          if editing != nil { editing = nil } else { onDone() }
+        }
+      } label: {
+        Label(editing == nil ? "Cards" : card.provider.displayName, systemImage: "chevron.left")
+      }
+      .buttonStyle(.borderless)
+      Spacer()
+      HStack(spacing: 6) {
+        Circle().fill(color).frame(width: 8, height: 8)
+        Text(editing.flatMap { id in card.elements.first { $0.id == id }?.kind.title } ?? card.provider.displayName)
+          .font(.headline)
+      }
+      Spacer()
+      Button("Done", action: onDone).keyboardShortcut(.defaultAction).controlSize(.small)
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 10)
+  }
+
+  // MARK: Card page
+
+  private var cardForm: some View {
+    Form {
+      Section {
+        ForEach(Array(card.elements.enumerated()), id: \.element.id) { index, element in
+          HStack(spacing: 8) {
+            Toggle("", isOn: $card.elements[index].enabled).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+            Button {
+              withAnimation(.snappy) { editing = element.id }
+            } label: {
+              HStack {
+                Label {
+                  VStack(alignment: .leading, spacing: 1) {
+                    Text(element.kind.title)
+                    Text(element.summary).font(.caption).foregroundStyle(.secondary)
+                  }
+                } icon: {
+                  Image(systemName: element.kind.systemImage)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+              }
+              .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button { moveElement(index, by: -1) } label: { Image(systemName: "chevron.up") }
+              .disabled(index == 0)
+            Button { moveElement(index, by: 1) } label: { Image(systemName: "chevron.down") }
+              .disabled(index == card.elements.count - 1)
+          }
+          .buttonStyle(.borderless)
+        }
+        Menu {
+          ForEach(CardElementKind.allCases, id: \.self) { kind in
+            Button {
+              let element = CardElement(kind: kind)
+              withAnimation(.snappy) {
+                card.elements.append(element)
+                editing = element.id
+              }
+            } label: {
+              Label(kind.title, systemImage: kind.systemImage)
+            }
+          }
+        } label: {
+          Label("Add Element", systemImage: "plus")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+      } header: {
+        Text("Elements")
+      } footer: {
+        Text("Switch elements on and off, open one for its settings, or add another (for example a second chart for other limits).")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+
+      Section("Limits") {
+        if availableWindows.isEmpty {
+          Text("No limits reported yet.").foregroundStyle(.secondary)
+        }
+        ForEach(availableWindows) { window in
+          LimitSettingsRow(window: window, settings: windowSettings(window.id))
+        }
+      }
+
+      Section {
+        Button("Remove Card", role: .destructive, action: onRemove)
+      }
+    }
+    .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+  }
+
+  private func windowSettings(_ id: String) -> Binding<WindowSettings> {
+    Binding(
+      get: { card.windowSettings[id] ?? WindowSettings() },
+      set: { card.windowSettings[id] = $0 == WindowSettings() ? nil : $0 }
+    )
   }
 
   private func moveElement(_ index: Int, by offset: Int) {
     let target = index + offset
     guard card.elements.indices.contains(target) else { return }
     withAnimation(.snappy) { card.elements.swapAt(index, target) }
+  }
+}
+
+/// A limit's name on this card and its place in the menu bar.
+private struct LimitSettingsRow: View {
+  let window: UsageWindow
+  @Binding var settings: WindowSettings
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      TextField(window.label, text: Binding(
+        get: { settings.label ?? "" },
+        set: { settings.label = $0.isEmpty ? nil : $0 }
+      ), prompt: Text(window.label))
+      .textFieldStyle(.roundedBorder)
+      Picker("Menu bar", selection: $settings.menuBar) {
+        ForEach(MenuBarPresence.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+      .pickerStyle(.menu)
+      .disabled(window.visualStyle == .menuRow)
+      .help(window.visualStyle == .menuRow ? "This limit has no menu-bar mark." : "When this limit appears in the menu-bar icon")
+    }
+    .padding(.vertical, 2)
+  }
+}
+
+/// One element's settings.
+private struct ElementSettingsForm: View {
+  @Binding var element: CardElement
+  let windows: [UsageWindow]
+  let label: (UsageWindow) -> String
+  let onDelete: () -> Void
+
+  var body: some View {
+    Form {
+      Section {
+        Toggle("Show on card", isOn: $element.enabled)
+        Picker("Kind", selection: $element.kind) {
+          ForEach(CardElementKind.allCases, id: \.self) { Label($0.title, systemImage: $0.systemImage).tag($0) }
+        }
+      }
+
+      Section("Limits") {
+        Picker("Show", selection: $element.windows.span) {
+          ForEach(WindowFilter.Span.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        ForEach(windows.filter(element.windows.inSpan)) { window in
+          Toggle(label(window), isOn: Binding(
+            get: { !element.windows.hidden.contains(window.id) },
+            set: { shown in
+              if shown { element.windows.hidden.remove(window.id) } else { element.windows.hidden.insert(window.id) }
+            }
+          ))
+        }
+      }
+
+      switch element.kind {
+      case .meters: metersSettings
+      case .chart: chartSettings
+      case .runway: runwaySettings
+      }
+
+      Section {
+        Button("Delete Element", role: .destructive, action: onDelete)
+      }
+    }
+    .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+  }
+
+  private var countPicker: some View {
+    Picker("Count", selection: $element.valueStyle) {
+      ForEach(CardValueStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+    }
+    .pickerStyle(.segmented)
+  }
+
+  private var metersSettings: some View {
+    Section("Display") {
+      countPicker
+      Picker("Bar", selection: $element.barThickness) {
+        ForEach(BarThickness.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      Toggle("Pace marker on bar", isOn: $element.showsPaceMarker)
+      Toggle("Pace status", isOn: $element.showsPaceStatus)
+      Picker("Reset", selection: $element.reset) {
+        ForEach(ResetDisplay.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+    }
+  }
+
+  private var chartSettings: some View {
+    Section("Display") {
+      Picker("Range", selection: $element.range) {
+        ForEach(HistoryRange.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      countPicker
+      Picker("Line", selection: $element.curve) {
+        ForEach(ChartCurve.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      Picker("Height", selection: $element.height) {
+        ForEach(ChartHeight.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      Toggle("On-pace guide", isOn: $element.showsPaceGuide)
+      Toggle("Area fill", isOn: $element.showsArea)
+      Toggle("Legend and labels", isOn: $element.showsLabels)
+    }
+  }
+
+  private var runwaySettings: some View {
+    Section("Display") {
+      Toggle("Projection at reset", isOn: $element.showsProjectionAtReset)
+      Toggle("Sustainable pace", isOn: $element.showsSustainablePace)
+    }
   }
 }

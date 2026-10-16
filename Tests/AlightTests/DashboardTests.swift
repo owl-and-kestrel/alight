@@ -6,12 +6,16 @@ import Testing
 struct DashboardTests {
   private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-  @Test("default layout follows the given provider order with limits only")
+  @Test("default cards show limits, with 5-hour and weekly charts and runway ready to switch on")
   func defaultLayout() {
     let layout = DashboardLayout.defaultLayout(order: [.claude, .codex, .antigravity])
     #expect(layout.cards.map(\.provider) == [.claude, .codex, .antigravity])
-    #expect(layout.cards.allSatisfy { $0.visibleElements == [.meters] })
-    #expect(layout.cards.allSatisfy { $0.elements.map(\.kind) == CardElement.allCases })
+    let elements = layout.cards[0].elements
+    #expect(elements.map(\.kind) == [.meters, .chart, .chart, .runway])
+    #expect(elements.map(\.enabled) == [true, false, false, false])
+    #expect(elements.map(\.windows.span) == [.all, .short, .long, .all])
+    #expect(elements[1].range == .day)
+    #expect(elements[2].range == .week)
   }
 
   @Test("dragging onto a card takes its slot in either direction")
@@ -86,25 +90,48 @@ struct DashboardTests {
 
   @Test("layouts round-trip and tolerate unknown elements and missing fields")
   func decoding() throws {
-    var card = DashboardCard(provider: .codex, hiddenWindowIDs: ["codex_fast"], valueStyle: .used, historyRange: .threeDays)
-    card.setEnabled(.history, true)
-    let layout = DashboardLayout(cards: [card])
+    var card = DashboardCard(provider: .codex, windowSettings: ["codex_slow": WindowSettings(label: "Week", menuBar: .pinned)])
+    card.elements[1].enabled = true
+    card.elements[1].curve = .steps
+    card.elements[0].windows.hidden = ["codex_fast"]
+    let layout = DashboardLayout(cards: [card], menuBarLimit: 3)
     let decoded = try JSONDecoder().decode(DashboardLayout.self, from: JSONEncoder().encode(layout))
     #expect(decoded == layout)
 
     let foreign = """
-      {"cards":[{"provider":"claude","elements":[{"kind":"sparkles","enabled":true},{"kind":"forecast","enabled":true}],"valueStyle":"someday"}]}
+      {"cards":[{"provider":"claude","elements":[{"kind":"sparkles"},{"kind":"chart","range":"fortnight","curve":"steps"}]}]}
       """
     let tolerant = try JSONDecoder().decode(DashboardLayout.self, from: Data(foreign.utf8))
-    let only = try #require(tolerant.cards.first)
-    #expect(only.provider == .claude)
-    #expect(only.elements.map(\.kind) == [.forecast, .meters, .history])
-    #expect(only.visibleElements == [.forecast])
-    #expect(only.valueStyle == .remaining)
-    #expect(only.showsCountdown)
+    let only = try #require(tolerant.cards.first?.elements)
+    #expect(only.map(\.kind) == [.chart])
+    #expect(only[0].range == .day)
+    #expect(only[0].curve == .steps)
   }
 
-  @Test("cards hide excluded windows and order weekly, short, then scoped")
+  @Test("the earlier card-wide layout migrates onto elements, splitting history into 5-hour and weekly charts")
+  func migration() throws {
+    let saved = """
+      {"cards":[{"id":"6B4A3A9E-6E0C-4B7C-9D0B-2B8E0D5A1C11","provider":"claude",
+        "hiddenWindowIDs":["claude_slow"],
+        "elements":[{"kind":"meters","enabled":true},{"kind":"history","enabled":true},{"kind":"forecast","enabled":false}],
+        "valueStyle":"used","showsPaceMarker":false,"showsCountdown":false,"historyRange":"threeDays","showsPaceGuide":false}],
+       "menuBarLimit":4}
+      """
+    let card = try #require(try JSONDecoder().decode(DashboardLayout.self, from: Data(saved.utf8)).cards.first)
+    #expect(card.id.uuidString == "6B4A3A9E-6E0C-4B7C-9D0B-2B8E0D5A1C11")
+    #expect(card.elements.map(\.kind) == [.meters, .chart, .chart, .runway])
+    #expect(card.elements.map(\.enabled) == [true, true, true, false])
+    #expect(card.elements[1].windows.span == .short)
+    #expect(card.elements[1].range == .threeDays)
+    #expect(card.elements[2].windows.span == .long)
+    #expect(card.elements[2].range == .week)
+    #expect(card.elements[1].id != card.elements[2].id)
+    #expect(card.elements.allSatisfy { $0.valueStyle == .used && !$0.showsPaceGuide && $0.windows.hidden == ["claude_slow"] })
+    #expect(card.elements[0].reset == .hidden)
+    #expect(!card.elements[0].showsPaceMarker)
+  }
+
+  @Test("cards order weekly, short, then scoped; elements filter by span and hidden limits")
   func cardWindows() {
     let windows = [
       window(.claude, .fast, used: 10),
@@ -115,9 +142,25 @@ struct DashboardTests {
       ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: windows)
     ])
     let card = DashboardCard(provider: .claude)
-    #expect(card.windows(in: status).map(\.id) == ["claude_slow", "claude_fast", "claude_slow_model_fable"])
-    let hidden = DashboardCard(provider: .claude, hiddenWindowIDs: ["claude_fast"])
-    #expect(hidden.windows(in: status).map(\.id) == ["claude_slow", "claude_slow_model_fable"])
+    let all = card.windows(in: status)
+    #expect(all.map(\.id) == ["claude_slow", "claude_fast", "claude_slow_model_fable"])
+    // The default weekly chart holds Fable; the 5-hour chart does not.
+    #expect(card.windows(all, for: card.elements[1]).map(\.id) == ["claude_fast"])
+    #expect(card.windows(all, for: card.elements[2]).map(\.id) == ["claude_slow", "claude_slow_model_fable"])
+    var meters = card.elements[0]
+    meters.windows.hidden = ["claude_fast"]
+    #expect(card.windows(all, for: meters).map(\.id) == ["claude_slow", "claude_slow_model_fable"])
+  }
+
+  @Test("a custom label replaces a limit's name on that card only")
+  func labels() {
+    let fable = window(.claude, .slow, used: 20, scope: .fable)
+    var card = DashboardCard(provider: .claude)
+    #expect(card.label(for: fable) == "Fable")
+    card.windowSettings[fable.id] = WindowSettings(label: "  Fable week ")
+    #expect(card.label(for: fable) == "Fable week")
+    card.windowSettings[fable.id] = WindowSettings(label: "   ")
+    #expect(card.label(for: fable) == "Fable")
   }
 
   @Test("layout store persists and survives a relaunch")

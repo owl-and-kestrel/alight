@@ -18,20 +18,25 @@ enum MenuBarRelevance {
     return min(1, max(0, score))
   }
 
-  /// The windows the menu bar can draw, in card order, without duplicates.
-  static func candidates(status: UsageStatus, layout: DashboardLayout) -> [UsageWindow] {
+  /// The windows the menu bar can draw, in card order, without duplicates,
+  /// each with its presence from the first card that shows it. Limits a card
+  /// sets to Never are left out.
+  static func candidates(status: UsageStatus, layout: DashboardLayout) -> [(window: UsageWindow, presence: MenuBarPresence)] {
     var seen = Set<String>()
     return layout.cards
-      .flatMap { $0.windows(in: status) }
-      .filter { $0.visualStyle != .menuRow && seen.insert($0.id).inserted }
+      .flatMap { card in card.windows(in: status).map { (window: $0, presence: card.menuBarPresence(for: $0)) } }
+      .filter { $0.window.visualStyle != .menuRow && seen.insert($0.window.id).inserted }
+      .filter { $0.presence != .never }
   }
 
+  /// Pinned limits go first and stay ahead of relevance (Vane's `pinned`).
   static func tree(status: UsageStatus, layout: DashboardLayout) -> LodNode {
-    LodNode(id: "menubar", title: "Menu bar", children: candidates(status: status, layout: layout).map { window in
+    LodNode(id: "menubar", title: "Menu bar", children: candidates(status: status, layout: layout).map { candidate in
       LodNode(
-        id: window.id,
-        title: window.qualifiedLabel,
-        salience: salience(window, result: status.result(for: window.provider))
+        id: candidate.window.id,
+        title: candidate.window.qualifiedLabel,
+        salience: salience(candidate.window, result: status.result(for: candidate.window.provider)),
+        pinned: candidate.presence == .pinned ? true : nil
       )
     })
   }

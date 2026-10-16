@@ -9,13 +9,18 @@ enum DashboardRenderHarness {
   static func run(outputPath: String) {
     let now = Date()
     let (status, history) = sample(now: now)
+    // The defaults, with the optional elements switched on.
     var layout = DashboardLayout.defaultLayout()
-    layout.cards[0].setEnabled(.history, true)
-    layout.cards[1].setEnabled(.history, true)
-    layout.cards[1].setEnabled(.forecast, true)
-    layout.cards[2].valueStyle = .used
-    layout.cards[2].historyRange = .sixHours
-    layout.cards[2].setEnabled(.history, true)
+    for card in layout.cards.indices {
+      for element in layout.cards[card].elements.indices where layout.cards[card].elements[element].kind == .chart {
+        layout.cards[card].elements[element].enabled = true
+      }
+    }
+    layout.cards[1].elements[3].enabled = true
+    layout.cards[2].elements[0].valueStyle = .used
+    layout.cards[2].elements[1].valueStyle = .used
+    layout.cards[2].elements[1].range = .sixHours
+    layout.cards[2].elements[2].enabled = false
 
     // Exercises the bundled core from the app bundle: Fieldbook pace, then
     // Vane's menu-bar selection.
@@ -37,10 +42,22 @@ enum DashboardRenderHarness {
       onDone: {},
       onRemove: {}
     )
+    let elementPage = CardCustomizeView(
+      card: .constant(layout.cards[1]),
+      availableWindows: status.result(for: .claude)?.windows.sorted(by: DashboardCard.displayOrder) ?? [],
+      color: actions.color(.claude),
+      result: status.result(for: .claude),
+      history: history,
+      now: now,
+      editing: layout.cards[1].elements[2].id,
+      onDone: {},
+      onRemove: {}
+    )
     let pages: [(NSAppearance.Name, AnyView)] = [
       (.aqua, AnyView(DashboardView(status: status, history: history, layout: .constant(layout), now: now, actions: actions, scrollsCards: false))),
       (.darkAqua, AnyView(DashboardView(status: status, history: history, layout: .constant(layout), now: now, actions: actions, scrollsCards: false))),
       (.aqua, AnyView(customize)),
+      (.aqua, AnyView(elementPage)),
     ]
     let images = pages.map { name, page -> NSBitmapImageRep? in
       // An offscreen window draws AppKit-backed controls (menus, context

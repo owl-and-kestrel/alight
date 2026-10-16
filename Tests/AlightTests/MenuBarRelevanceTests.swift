@@ -58,12 +58,22 @@ struct MenuBarRelevanceTests {
     #expect(!all.windows.contains { $0.visualStyle == .menuRow })
   }
 
-  @Test("only windows on some card are candidates")
+  @Test("only windows on some card are candidates, and Never leaves one out")
   func respectsCards() {
     var layout = DashboardLayout(cards: [DashboardCard(provider: .codex), DashboardCard(provider: .antigravity)], menuBarLimit: 6)
     #expect(Set(MenuBarRelevance.select(status: status, layout: layout).windows.map(\.id)) == ["codex_slow", "antigravity_slow"])
-    layout.cards[1].hiddenWindowIDs = ["antigravity_slow"]
+    layout.cards[1].windowSettings["antigravity_slow"] = WindowSettings(menuBar: .never)
     #expect(MenuBarRelevance.select(status: status, layout: layout).windows.map(\.id) == ["codex_slow"])
+  }
+
+  @Test("an Always limit is shown ahead of relevance")
+  func pinned() {
+    var layout = DashboardLayout.defaultLayout()
+    layout.menuBarLimit = 2
+    // Codex is the least relevant window here.
+    layout.cards[0].windowSettings["codex_slow"] = WindowSettings(menuBar: .pinned)
+    let shown = Set(MenuBarRelevance.select(status: status, layout: layout).windows.map(\.id))
+    #expect(shown == ["codex_slow", "claude_fast"])
   }
 
   @Test("without the bundled core, every candidate is shown rather than none")
