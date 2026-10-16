@@ -79,4 +79,19 @@ struct AntigravityAccountIdentityTests {
     record(4, used: 1, resetAt: start.addingTimeInterval(40000))
     #expect(Set(history.observations.map(\.segment)).count == 2)
   }
+
+  @Test("the identity source is the endpoint fingerprint, never an override's credentials")
+  func identitySourceCarriesNoSecrets() throws {
+    let secret = "https://review-user:review-secret@example.invalid/quota?token=review-token"
+    let source = AntigravityUsageClient.identitySource(environment: ["ALIGHT_ANTIGRAVITY_USAGE_URL": secret])
+    for fragment in ["review-user", "review-secret", "review-token", "example.invalid"] {
+      #expect(!source.contains(fragment))
+    }
+    #expect(source != AntigravityUsageClient.identitySource(environment: [:]))
+    let identity = try #require(AntigravityUsageClient.observationIdentity(subject: "111", source: source))
+    let line = String(decoding: try QuotaOutbox.encode(QuotaOutboxEntry(
+      sequence: 1, identities: [.antigravity: identity], snapshot: Data("{}".utf8)
+    )), as: UTF8.self)
+    #expect(!line.contains("review-secret") && !line.contains("review-token"))
+  }
 }

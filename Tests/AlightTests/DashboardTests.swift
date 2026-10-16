@@ -108,6 +108,16 @@ struct DashboardTests {
     #expect(only[0].curve == .steps)
   }
 
+  @Test("a card for a provider this build does not know is left out; the rest of the layout survives")
+  func unknownProviderCard() throws {
+    let saved = """
+      {"cards":[{"provider":"codex"},{"provider":"someday-provider"},{"provider":"claude"}],"menuBarLimit":3}
+      """
+    let layout = try JSONDecoder().decode(DashboardLayout.self, from: Data(saved.utf8))
+    #expect(layout.cards.map(\.provider) == [.codex, .claude])
+    #expect(layout.menuBarLimit == 3)
+  }
+
   @Test("the earlier card-wide layout migrates onto elements, splitting history into 5-hour and weekly charts")
   func migration() throws {
     let saved = """

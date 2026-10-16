@@ -15,8 +15,9 @@
 // one has it, otherwise it is fetched from Fieldbook's Nest origin into
 // node_modules/.cache (FIELDBOOK_REMOTE overrides the URL).
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
@@ -32,6 +33,33 @@ if (!existsSync(join(vaneDir, "dist/src/index.js"))) {
   process.exit(1);
 }
 const vane = JSON.parse(readFileSync(join(vaneDir, "package.json"), "utf8"));
+
+// The Vane input is pinned by identity and by the digest of the JavaScript it
+// contributes (dist/src/**/*.js, path and bytes, sorted): VANE_DIST or a
+// differently built package cannot slip in other code under the same version.
+const VANE_PIN = { name: "@owl-kestrel/vane", version: "0.1.0", jsDigest: "678dee02ed444100ef44810a6b265970592e02907a3e7dc3517406b4b8f86a01" };
+function jsDigest(dir) {
+  const files = [];
+  (function walk(path) {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const full = join(path, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (full.endsWith(".js")) files.push(full);
+    }
+  })(dir);
+  const hash = createHash("sha256");
+  for (const file of files.sort()) {
+    hash.update(relative(dir, file) + "\0");
+    hash.update(readFileSync(file));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+const vaneDigest = jsDigest(join(vaneDir, "dist/src"));
+if (vane.name !== VANE_PIN.name || vane.version !== VANE_PIN.version || vaneDigest !== VANE_PIN.jsDigest) {
+  console.error(`build-core: Vane input ${vane.name}@${vane.version} (js ${vaneDigest}) is not the pinned ${VANE_PIN.name}@${VANE_PIN.version} (js ${VANE_PIN.jsDigest})`);
+  process.exit(1);
+}
 
 // esbuild records each module's path in a comment, so both upstreams are
 // staged at fixed paths: the bundle is identical whichever source fed it.

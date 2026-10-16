@@ -101,7 +101,7 @@ struct QuotaOutboxTests {
 
     var reloaded = QuotaOutbox(directory: dir)
     #expect(reloaded.load(now: start).map(\.sequence) == [2])
-    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == [todayFile.lastPathComponent])
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".jsonl") } == [todayFile.lastPathComponent])
   }
 
   @Test("history is Fieldbook's reading of the outbox, with continuity and forecasts")
@@ -153,7 +153,105 @@ struct QuotaOutboxTests {
     #expect(history.observations.count == 6)
     #expect(history.observations.last?.window.usedPercent == 2)
   }
+
+  @Test("an append after an interrupted write survives reload")
+  func appendAfterFragment() throws {
+    let dir = directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    var outbox = QuotaOutbox(directory: dir)
+    outbox.append(try snapshot(used: 1, at: start), identities: [:])
+    let file = dir.appending(path: "quota-snapshots-\(QuotaOutbox.dayName(start)).jsonl")
+    let handle = try FileHandle(forWritingTo: file)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("{\"schema\":\"ok.alight.quota-out".utf8))
+    try handle.close()
+
+    var reloaded = QuotaOutbox(directory: dir)
+    #expect(reloaded.load(now: start).map(\.sequence) == [1])
+    reloaded.append(try snapshot(used: 2, at: start.addingTimeInterval(60), sequence: 1), identities: [:])
+    var again = QuotaOutbox(directory: dir)
+    #expect(again.load(now: start).map(\.sequence) == [1, 2])
+  }
+
+  @Test("an existing day file is tightened to 0600 on append")
+  func permissionsRepaired() throws {
+    let dir = directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let file = dir.appending(path: "quota-snapshots-\(QuotaOutbox.dayName(start)).jsonl")
+    FileManager.default.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o644])
+    var outbox = QuotaOutbox(directory: dir)
+    outbox.append(try snapshot(used: 1, at: start), identities: [:])
+    let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+    #expect(mode?.intValue == 0o600)
+  }
+
+  @Test("a running app expires old day files when a new day starts, and only its own files")
+  func retentionWithoutReload() throws {
+    let dir = directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    var outbox = QuotaOutbox(directory: dir)
+    outbox.append(try snapshot(used: 1, at: start), identities: [:])
+    try Data("keep".utf8).write(to: dir.appending(path: "quota-snapshots-notes.jsonl"))
+    let later = start.addingTimeInterval(QuotaOutbox.retention + 2 * 86400)
+    outbox.append(try snapshot(used: 2, at: later, sequence: 1), identities: [:])
+    let files = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path))
+    #expect(files == ["quota-snapshots-\(QuotaOutbox.dayName(later)).jsonl", "quota-snapshots-notes.jsonl", "sequence"])
+  }
+
+  @Test("the sequence continues after every day file has expired")
+  func sequenceSurvivesExpiry() throws {
+    let dir = directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    var outbox = QuotaOutbox(directory: dir)
+    outbox.append(try snapshot(used: 1, at: start), identities: [:])
+    outbox.append(try snapshot(used: 2, at: start.addingTimeInterval(60), sequence: 1), identities: [:])
+    let later = start.addingTimeInterval(QuotaOutbox.retention + 2 * 86400)
+    var reloaded = QuotaOutbox(directory: dir)
+    #expect(reloaded.load(now: later).isEmpty)
+    guard case .appended(let next) = reloaded.append(try snapshot(used: 3, at: later, sequence: 2), identities: [:]) else {
+      Issue.record("not appended"); return
+    }
+    #expect(next.sequence == 3)
+  }
+
+  @Test("a legacy history file that fails to load is kept, not deleted")
+  func malformedLegacyKept() throws {
+    let dir = directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let url = dir.appending(path: "usage-history.json")
+    try Data("{not json".utf8).write(to: url)
+    let base = UsageHistory.legacy(at: url, now: start)
+    #expect(base.observations.isEmpty)
+    #expect(FileManager.default.fileExists(atPath: url.path))
+  }
+
+  @Test("replay records providers in capture order, so a snapshot's name order is not a clock reversal")
+  func replayInCaptureOrder() throws {
+    // Name order is antigravity, claude, codex; captures run the other way.
+    func entry(at base: Date, sequence: Int) throws -> QuotaOutboxEntry {
+      let inputs: [QuotaSnapshotExporter.Input] = [
+        (try FieldbookQuotaTests.antigravityResult(at: base.addingTimeInterval(50)), base.addingTimeInterval(50)),
+        (try FieldbookQuotaTests.claudeResult(at: base.addingTimeInterval(40)), base.addingTimeInterval(40)),
+        (try FieldbookQuotaTests.codexResult(used: Double(3 + sequence), at: base.addingTimeInterval(30)), base.addingTimeInterval(30)),
+      ].map { .init(result: $0.0, attemptedAt: base, liveCapturedAt: $0.1) }
+      let snapshot = try QuotaSnapshotExporter.encode(QuotaSnapshotExporter.snapshot(
+        inputs, producer: FieldbookQuotaTests.producer, installId: "install-1", sequence: sequence,
+        writtenAt: base.addingTimeInterval(55), antigravityEndpointRef: nil
+      ))
+      return QuotaOutboxEntry(sequence: sequence + 1, identities: [.antigravity: identity, .claude: identity, .codex: identity], snapshot: snapshot)
+    }
+    let history = QuotaProjection.history(
+      base: UsageHistory(persistenceURL: nil, now: start),
+      entries: [try entry(at: start, sequence: 0), try entry(at: start.addingTimeInterval(120), sequence: 1)]
+    )
+    let antigravity = history.observations.filter { $0.window.id == "antigravity_fast" }
+    #expect(antigravity.count == 2)
+    #expect(Set(antigravity.map(\.segment)).count == 1)
+  }
 }
+
 
 private extension ProviderResult {
   func withIdentity(_ identity: UsageObservationIdentity) -> ProviderResult {

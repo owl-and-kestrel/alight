@@ -30,10 +30,16 @@ enum QuotaProjection {
   /// history ignores it.
   static func record(_ entry: QuotaOutboxEntry, into history: inout UsageHistory, core: Result<CoreScript, Error> = CoreScript.shared) {
     guard let reading = reading(of: entry, core: core) else { return }
-    for provider in reading.providers.map(\.provider) {
-      guard let usage = reading.usage(for: provider),
+    // In capture order, not the snapshot's provider order: history reads an
+    // earlier time after a later one as the clock going backwards.
+    let readings = reading.providers.compactMap { provider -> (Provider, FieldbookProviderUsage, Date)? in
+      guard let usage = reading.usage(for: provider.provider),
         let capturedAt = usage.observedAt.flatMap(FieldbookTime.date)
-      else { continue }
+      else { return nil }
+      return (provider.provider, usage, capturedAt)
+    }
+    .sorted { $0.2 < $1.2 }
+    for (provider, usage, capturedAt) in readings {
       history.record(
         ProviderResult(
           provider: provider, ok: true, source: "live", error: nil, windows: usage.usageWindows(),
@@ -103,7 +109,11 @@ extension UsageHistory {
         capturedAt: capturedAt
       )
     }
-    if history.observations.isEmpty { try? FileManager.default.removeItem(at: url) }
+    // Delete only a file that read cleanly and has fully aged out; a file
+    // that failed to load is left for inspection.
+    if saved.persistenceIssue == nil, saved.observations.isEmpty, history.observations.isEmpty {
+      try? FileManager.default.removeItem(at: url)
+    }
     return history
   }
 

@@ -50,20 +50,29 @@ It never prints or stores credentials. Each provider is polled independently, so
 ### Usage insights source milestone
 
 Alight's data is what goes into Fieldbook. Every refresh is exported as an
-`ok.alight.quota-snapshot.v1` (see *Quota snapshot export*), and each snapshot
-is also appended to an outbox in `Application Support/Alight/fieldbook-outbox/`
-(one JSON line per entry, `quota-snapshots-YYYY-MM-DD.jsonl` per UTC day, mode
-0600, 14 days retained, `ok.alight.quota-outbox-entry.v1` envelope with a
-monotonic `sequence` and Alight's per-provider continuity identity). An
-unchanged snapshot is appended only as a ten-minute heartbeat. Everything
+`ok.alight.quota-snapshot.v1` (see *Quota snapshot export*). Each snapshot that
+Fieldbook's normalizer reads as observed is also appended to an outbox in
+`Application Support/Alight/fieldbook-outbox/` (one JSON line per entry,
+`quota-snapshots-YYYY-MM-DD.jsonl` per UTC day, mode 0600, `ok.alight.quota-outbox-entry.v1`
+envelope with a `sequence` that continues across restarts and expiry, and
+Alight's per-provider continuity identity, whose sources are fixed names or
+hashed endpoint fingerprints). Day files older than 14 days are removed at
+launch and whenever a new day's file starts. An unchanged snapshot is appended
+only as a ten-minute heartbeat; an unused window's drifting reset does not
+count as a change. Everything
 Alight shows is Fieldbook's reading of those snapshots, computed by
 Fieldbook's own `normalizeAlightQuotaSnapshot` (`ok.fieldbook.provider-usage.v1`):
 the windows on the cards and in the menu bar, the history replayed at launch,
 and every window's pace (Fieldbook's `quotaWindowPace`, linear curve, no
 reserve, which is Alight's pace). A development build without a source commit
 exports nothing and keeps its history in memory. The pre-Fieldbook
-`usage-history.json` is read once per launch beneath the outbox until its
-readings age out, then deleted; it is never written again.
+`usage-history.json` is read at launch beneath the outbox (its loader may
+still prune expired readings from it) and deleted once it loads cleanly with
+nothing left; a file that fails to load is kept. New readings never go into it.
+
+The dashboard layout is JSON in UserDefaults (`dashboardLayout`). Unknown
+fields are ignored, and a card or element this build cannot read (a newer
+provider or element kind) is left out; it is not preserved on the next save.
 
 Live readings keep their request-completion capture time.
 Cached, deferred, or failed refreshes never invent history. This supplements

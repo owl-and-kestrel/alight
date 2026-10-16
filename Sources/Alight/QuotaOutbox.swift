@@ -26,7 +26,10 @@ struct QuotaOutboxEntry: Equatable, Sendable {
 /// time is Fieldbook's reading of these snapshots.
 ///
 /// One JSON line per entry, in a file per UTC day
-/// (`quota-snapshots-YYYY-MM-DD.jsonl`), mode 0600, 14 days retained. A
+/// (`quota-snapshots-YYYY-MM-DD.jsonl`), mode 0600, 14 days retained (checked
+/// at load and whenever a new day's file starts). The last sequence is also
+/// kept in a `sequence` file, so numbering continues after every day file has
+/// expired. A
 /// snapshot is appended when any provider's reading changed or a heartbeat is
 /// due, so unchanged refreshes do not grow the log but continuity
 /// (`UsageForecast.maximumGap`) is never broken.
@@ -39,6 +42,7 @@ struct QuotaOutbox: Sendable {
   private(set) var lastSequence = 0
   private var lastSignature: Data?
   private var lastWrittenAt: Date?
+  private var lastWrittenDay: String?
   private(set) var issue: String?
 
   init(directory: URL) {
@@ -61,14 +65,10 @@ struct QuotaOutbox: Sendable {
   /// Every retained entry in sequence order. Deletes day files past
   /// retention and skips lines that do not decode (a write cut short).
   mutating func load(now: Date) -> [QuotaOutboxEntry] {
-    let cutoff = Self.dayName(now.addingTimeInterval(-Self.retention))
+    removeExpiredFiles(now: now)
     var entries: [QuotaOutboxEntry] = []
     var skipped = 0
     for file in dayFiles() {
-      if Self.day(of: file) < cutoff {
-        try? FileManager.default.removeItem(at: file)
-        continue
-      }
       guard let data = try? Data(contentsOf: file) else { continue }
       for line in data.split(separator: UInt8(ascii: "\n")) where !line.isEmpty {
         if let entry = Self.decode(Data(line)) { entries.append(entry) } else { skipped += 1 }
@@ -76,7 +76,7 @@ struct QuotaOutbox: Sendable {
     }
     if skipped > 0 { Self.logger.error("Skipped \(skipped, privacy: .public) unreadable outbox lines") }
     entries.sort { $0.sequence < $1.sequence }
-    lastSequence = max(lastSequence, entries.last?.sequence ?? 0)
+    lastSequence = max(lastSequence, entries.last?.sequence ?? 0, storedSequence() ?? 0)
     if let last = entries.last {
       lastSignature = Self.signature(last.snapshot)
       lastWrittenAt = last.writtenAt
@@ -98,8 +98,17 @@ struct QuotaOutbox: Sendable {
       return .unchanged
     }
     let entry = QuotaOutboxEntry(sequence: lastSequence + 1, identities: identities, snapshot: compact)
+    let day = Self.dayName(writtenAt)
     do {
-      try write(entry, day: Self.dayName(writtenAt))
+      try write(entry, day: day)
+      // The sequence file only speeds continuity across full expiry; the day
+      // files stay the record, so a failure here is not an append failure.
+      try? storeSequence(entry.sequence)
+      if day != lastWrittenDay {
+        // A long-running app crosses days without reloading.
+        removeExpiredFiles(now: writtenAt)
+        lastWrittenDay = day
+      }
       lastSequence = entry.sequence
       lastSignature = signature
       lastWrittenAt = writtenAt
@@ -178,18 +187,60 @@ struct QuotaOutbox: Sendable {
         throw CocoaError(.fileWriteUnknown)
       }
     }
+    try Self.restrictToOwner(url)
     var line = try Self.encode(entry)
     line.append(UInt8(ascii: "\n"))
-    let handle = try FileHandle(forWritingTo: url)
+    let handle = try FileHandle(forUpdating: url)
     defer { try? handle.close() }
-    try handle.seekToEnd()
+    // A write cut short leaves a line without its newline; end it first so
+    // this entry is not glued onto the fragment (and lost with it).
+    let end = try handle.seekToEnd()
+    if end > 0 {
+      try handle.seek(toOffset: end - 1)
+      if try handle.read(upToCount: 1) != Data([UInt8(ascii: "\n")]) {
+        line.insert(UInt8(ascii: "\n"), at: 0)
+      }
+      try handle.seekToEnd()
+    }
     try handle.write(contentsOf: line)
   }
 
+  /// Files written before (or changed since) keep 0600.
+  private static func restrictToOwner(_ url: URL) throws {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    if (attributes[.posixPermissions] as? NSNumber)?.intValue != 0o600 {
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+  }
+
+  /// Deletes this outbox's own day files older than retention, nothing else.
+  private func removeExpiredFiles(now: Date) {
+    let cutoff = Self.dayName(now.addingTimeInterval(-Self.retention))
+    for file in dayFiles() where Self.day(of: file) < cutoff {
+      try? FileManager.default.removeItem(at: file)
+    }
+  }
+
+  private var sequenceURL: URL { directory.appending(path: "sequence") }
+
+  private func storedSequence() -> Int? {
+    (try? String(contentsOf: sequenceURL, encoding: .utf8)).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+  }
+
+  private func storeSequence(_ sequence: Int) throws {
+    try Data("\(sequence)\n".utf8).write(to: sequenceURL, options: .atomic)
+    try Self.restrictToOwner(sequenceURL)
+  }
+
+  /// Only `quota-snapshots-YYYY-MM-DD.jsonl`: retention never touches
+  /// anything else in the directory.
   private func dayFiles() -> [URL] {
     let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-    return files.filter { $0.lastPathComponent.hasPrefix("quota-snapshots-") && $0.pathExtension == "jsonl" }
-      .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    return files.filter { file in
+      file.pathExtension == "jsonl" && file.lastPathComponent.hasPrefix("quota-snapshots-")
+        && Self.day(of: file).wholeMatch(of: /\d{4}-\d{2}-\d{2}/) != nil
+    }
+    .sorted { $0.lastPathComponent < $1.lastPathComponent }
   }
 
   private static func day(of file: URL) -> String {

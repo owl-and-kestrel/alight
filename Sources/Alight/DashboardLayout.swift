@@ -452,10 +452,20 @@ struct DashboardLayout: Codable, Equatable, Sendable {
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
+    // Card by card: one card from a newer build (an unknown provider) is
+    // left out instead of failing the whole layout back to defaults.
+    let cards = (try? container.decodeIfPresent([LossyCard].self, forKey: .cards))?.compactMap(\.card)
     self.init(
-      cards: try container.decodeIfPresent([DashboardCard].self, forKey: .cards) ?? [],
+      cards: cards ?? [],
       menuBarLimit: try container.decodeIfPresent(Int.self, forKey: .menuBarLimit) ?? Self.defaultMenuBarLimit
     )
+  }
+
+  private struct LossyCard: Decodable {
+    let card: DashboardCard?
+    init(from decoder: Decoder) throws {
+      card = try? DashboardCard(from: decoder)
+    }
   }
 
   static func defaultLayout(order: [Provider] = Provider.allCases) -> DashboardLayout {
@@ -541,6 +551,8 @@ final class DashboardLayoutStore {
   private func save() {
     guard let data = try? JSONEncoder().encode(layout) else { return }
     defaults.set(data, forKey: Self.defaultsKey)
-    AppSettings.providerOrder = layout.providerOrder
+    // AppSettings lives in the standard defaults; a store on other defaults
+    // (tests) must not write there.
+    if defaults == .standard { AppSettings.providerOrder = layout.providerOrder }
   }
 }

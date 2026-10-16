@@ -79,7 +79,7 @@ struct AntigravityUsageClient: Sendable {
         source: "live",
         error: nil,
         windows: windows,
-        observationIdentity: Self.observationIdentity(subject: credential.accountSubject, source: usageURL.absoluteString)
+        observationIdentity: Self.observationIdentity(subject: credential.accountSubject, source: Self.identitySource())
       )
       result.quotaReport = AntigravityUsageParser.quotaReport(from: payload)
       result.accountRef = UsageAccountRef.digest(
@@ -294,6 +294,13 @@ struct AntigravityUsageClient: Sendable {
       let subject = (claims["sub"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !subject.isEmpty
     else { return nil }
     return subject
+  }
+
+  /// The continuity source for this endpoint: its fingerprint, never the URL,
+  /// since an `ALIGHT_ANTIGRAVITY_USAGE_URL` override may carry credentials
+  /// or tokens and identities are persisted in the outbox.
+  static func identitySource(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+    "antigravity-endpoint:\(AntigravityUsageSource.cacheIdentity(environment: environment))"
   }
 
   /// Continuity identity for a Google account, as Codex's is for its account.
