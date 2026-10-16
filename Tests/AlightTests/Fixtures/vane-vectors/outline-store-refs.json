@@ -1,0 +1,109 @@
+{
+  "name": "outline-store-refs",
+  "spec": "8.7",
+  "note": "Hidden subtrees get content refs.",
+  "input": {
+    "tree": {
+      "id": "plan",
+      "title": "Release plan",
+      "status": "active",
+      "summary": "Ship text LOD in Rectrix 0.6",
+      "children": [
+        {
+          "id": "t1",
+          "title": "Lock race",
+          "severity": "high",
+          "summary": "stale-lock break can double-refresh",
+          "detail": "Repro: kill -STOP the holder\nthen wait 30s",
+          "ref": "nest:issue:41"
+        },
+        {
+          "id": "t2",
+          "title": "Docs pass",
+          "severity": "low",
+          "summary": "README + SPEC"
+        },
+        {
+          "id": "t3",
+          "title": "Vectors",
+          "status": "blocked",
+          "summary": "needs golden review",
+          "children": [
+            {
+              "title": "text snapshots"
+            },
+            {
+              "title": "json snapshots"
+            },
+            {
+              "title": "astra differential",
+              "priority": 0
+            }
+          ]
+        },
+        {
+          "id": "t4",
+          "title": "Bench",
+          "severity": "low"
+        },
+        {
+          "id": "t5",
+          "title": "Port to Python",
+          "severity": "informational",
+          "summary": "not planned"
+        }
+      ]
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 200
+    },
+    "store": true
+  },
+  "expect": {
+    "mode": "frontier",
+    "text": "- [active] plan: Release plan\n  - [high] t1: Lock race (ref:nest:issue:41)\n  - [low] t2: Docs pass\n  + 3 more (1 blocked, 1 informational, 1 low) → ref:lod:2563c338ea6fcd6aab65d2897baa0624",
+    "omitted": [
+      {
+        "path": [],
+        "title": "Release plan",
+        "count": 3,
+        "fieldsHidden": 0,
+        "hiddenNodes": 6,
+        "hiddenIndexes": [
+          2,
+          3,
+          4
+        ],
+        "by": {
+          "blocked": 1,
+          "low": 1,
+          "informational": 1
+        },
+        "ref": "lod:2563c338ea6fcd6aab65d2897baa0624"
+      }
+    ],
+    "refs": [
+      "lod:2563c338ea6fcd6aab65d2897baa0624"
+    ],
+    "metrics": {
+      "outputBytes": 190,
+      "outputChars": 188,
+      "outputTokens": 64,
+      "totalNodes": 9,
+      "visibleNodes": 3,
+      "levels": {
+        "hidden": 6,
+        "core": 3,
+        "summary": 0,
+        "detail": 0,
+        "full": 0
+      },
+      "profile": null,
+      "budget": {
+        "bytes": 200
+      }
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "name": "outline-root-only",
+  "spec": "8.3",
+  "note": "Root identity with collapsed children.",
+  "input": {
+    "tree": {
+      "id": "plan",
+      "title": "Release plan",
+      "status": "active",
+      "summary": "Ship text LOD in Rectrix 0.6",
+      "children": [
+        {
+          "id": "t1",
+          "title": "Lock race",
+          "severity": "high",
+          "summary": "stale-lock break can double-refresh",
+          "detail": "Repro: kill -STOP the holder\nthen wait 30s",
+          "ref": "nest:issue:41"
+        },
+        {
+          "id": "t2",
+          "title": "Docs pass",
+          "severity": "low",
+          "summary": "README + SPEC"
+        },
+        {
+          "id": "t3",
+          "title": "Vectors",
+          "status": "blocked",
+          "summary": "needs golden review",
+          "children": [
+            {
+              "title": "text snapshots"
+            },
+            {
+              "title": "json snapshots"
+            },
+            {
+              "title": "astra differential",
+              "priority": 0
+            }
+          ]
+        },
+        {
+          "id": "t4",
+          "title": "Bench",
+          "severity": "low"
+        },
+        {
+          "id": "t5",
+          "title": "Port to Python",
+          "severity": "informational",
+          "summary": "not planned"
+        }
+      ]
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 80
+    }
+  },
+  "expect": {
+    "mode": "frontier",
+    "text": "- [active] plan: Release plan — Ship text LOD in Rectrix 0.6 (+5 more)",
+    "omitted": [
+      {
+        "path": [],
+        "title": "Release plan",
+        "count": 5,
+        "fieldsHidden": 0,
+        "hiddenNodes": 8,
+        "hiddenIndexes": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "by": {
+          "high": 1,
+          "low": 2,
+          "blocked": 1,
+          "informational": 1
+        }
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 72,
+      "outputChars": 70,
+      "outputTokens": 24,
+      "totalNodes": 9,
+      "visibleNodes": 1,
+      "levels": {
+        "hidden": 8,
+        "core": 0,
+        "summary": 0,
+        "detail": 0,
+        "full": 1
+      },
+      "profile": null,
+      "budget": {
+        "bytes": 80
+      }
+    }
+  }
+}

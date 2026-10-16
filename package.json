@@ -28,10 +28,12 @@
     "LICENSE"
   ],
   "scripts": {
+    "build:core": "node ./scripts/build-core.mjs",
     "build:native": "./script/build_and_run.sh --build",
     "check": "node --check ./bin/alight.mjs",
-    "package:release": "./script/package_release.sh",
+    "check:core": "node ./scripts/build-core.mjs --check",
     "migrate:data": "./scripts/migrate-alight-data.sh",
+    "package:release": "./script/package_release.sh",
     "release:dry-run": "node ./scripts/publish-release.mjs",
     "release:publish": "node ./scripts/publish-release.mjs --publish",
     "test": "node --test",
@@ -42,5 +44,8 @@
   },
   "dependencies": {
     "@owl-kestrel/hatch-contracts": "0.3.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

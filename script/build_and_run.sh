@@ -16,6 +16,7 @@ APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
+APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
@@ -71,9 +72,11 @@ if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then
 fi
 
 rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS"
+mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+# The upstream JavaScript (Vane) that CoreScript runs in JavaScriptCore.
+cp "$ROOT_DIR/Sources/Alight/Resources/alight-core.js" "$APP_RESOURCES/alight-core.js"
 /usr/bin/ditto "$SPARKLE_FRAMEWORK" "$APP_FRAMEWORKS/Sparkle.framework"
 
 # SwiftPM links Sparkle at @rpath. The command-line build's development rpaths

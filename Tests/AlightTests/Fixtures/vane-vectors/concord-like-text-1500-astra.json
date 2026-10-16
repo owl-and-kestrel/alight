@@ -1,0 +1,199 @@
+{
+  "name": "concord-like-text-1500-astra",
+  "spec": "8.2 8.3 8.3a",
+  "note": "Astra strategy twin of concord-like-text-1500 (concord).",
+  "input": {
+    "json": {
+      "schemaVersion": "ok.operations.resume-packet.v1",
+      "cursor": 42,
+      "workstream": {
+        "id": "ws-example-fleet",
+        "title": "Direct access across the example fleet",
+        "responsible": "role:main",
+        "status": "blocked",
+        "priority": 0,
+        "notBefore": null,
+        "reviewAt": "2026-10-03T12:00:00.000Z",
+        "nextAction": "Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit.",
+        "blockers": [
+          {
+            "ref": "feather:linux-host-acceptance",
+            "reason": "Linux lifecycle is qualified but host acceptance has no receipt yet."
+          },
+          {
+            "ref": "fledge:publisher-owner-pickup",
+            "reason": "Publisher owner has not accepted pickup."
+          },
+          {
+            "ref": "feather:connector-incident",
+            "reason": "Hosted connector returns 502 on cold start."
+          }
+        ],
+        "sourceRefs": [
+          "git:flock:00000000",
+          "git:flock:00001eef",
+          "git:flock:00003dde",
+          "git:flock:00005ccd",
+          "git:flock:00007bbc",
+          "git:flock:00009aab",
+          "git:flock:0000b99a",
+          "git:flock:0000d889",
+          "git:flock:0000f778",
+          "git:flock:00011667",
+          "git:flock:00013556",
+          "git:flock:00015445"
+        ],
+        "evidenceRefs": [
+          "nest:work:nestwork_0",
+          "nest:work:nestwork_1",
+          "nest:work:nestwork_2",
+          "nest:work:nestwork_3",
+          "nest:work:nestwork_4",
+          "nest:work:nestwork_5",
+          "nest:work:nestwork_6",
+          "nest:work:nestwork_7",
+          "nest:work:nestwork_8"
+        ],
+        "checkpoint": {
+          "ref": "local:/ops/handoffs/EXAMPLE.md",
+          "observedAt": "2026-10-03T15:18:19.000Z",
+          "pendingOperations": [
+            "op-1 waiting",
+            "op-2 waiting"
+          ]
+        },
+        "attention": [
+          "review_due",
+          "blocked"
+        ]
+      },
+      "note": "Read referenced owner results and reconcile pending effects. This packet grants no authority."
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 1500
+    },
+    "strategy": "astra"
+  },
+  "expect": {
+    "mode": "ranked_items",
+    "text": "- schemaVersion: ok.operations.resume-packet.v1 — Read referenced owner results and reconcile pending effects. This packet grants no authority.\n  - cursor: 42\n  - [blocked P0] ws-example-fleet: Direct access across the example fleet — Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read…\n    - responsible: role:main\n    - reviewAt: 2026-10-03T12:00:00.000Z\n    - blockers\n      - feather:linux-host-acceptance\n      - fledge:publisher-owner-pickup\n      - feather:connector-incident\n    - sourceRefs\n      - git:flock:00000000\n      - git:flock:00001eef\n      - git:flock:00003dde\n      - git:flock:00005ccd\n      - git:flock:00007bbc\n      - git:flock:00009aab\n      - git:flock:0000b99a\n      - git:flock:0000d889\n      - git:flock:0000f778\n      - git:flock:00011667\n      - git:flock:00013556\n      + 1 more\n    - evidenceRefs\n      - nest:work:nestwork_0\n      - nest:work:nestwork_1\n      - nest:work:nestwork_2\n      - nest:work:nestwork_3\n      - nest:work:nestwork_4\n      - nest:work:nestwork_5\n      - nest:work:nestwork_6\n      - nest:work:nestwork_7\n      - nest:work:nestwork_8\n    - attention\n      - review_due\n      - blocked",
+    "omitted": [
+      {
+        "path": [
+          1
+        ],
+        "title": "Direct access across the example fleet",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 5,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "workstream",
+        "sourceKeys": [
+          "checkpoint"
+        ]
+      },
+      {
+        "path": [
+          1,
+          2,
+          0
+        ],
+        "title": "feather:linux-host-acceptance",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 0,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "workstream.blockers[0]",
+        "sourceKeys": [
+          "reason"
+        ],
+        "ref": "feather:linux-host-acceptance"
+      },
+      {
+        "path": [
+          1,
+          2,
+          1
+        ],
+        "title": "fledge:publisher-owner-pickup",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 0,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "workstream.blockers[1]",
+        "sourceKeys": [
+          "reason"
+        ],
+        "ref": "fledge:publisher-owner-pickup"
+      },
+      {
+        "path": [
+          1,
+          2,
+          2
+        ],
+        "title": "feather:connector-incident",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 0,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "workstream.blockers[2]",
+        "sourceKeys": [
+          "reason"
+        ],
+        "ref": "feather:connector-incident"
+      },
+      {
+        "path": [
+          1,
+          3
+        ],
+        "title": "sourceRefs",
+        "count": 1,
+        "fieldsHidden": 0,
+        "hiddenNodes": 1,
+        "hiddenIndexes": [
+          11
+        ],
+        "by": {},
+        "sourcePath": "workstream.sourceRefs",
+        "sourceKeys": [
+          "[11]"
+        ]
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 1498,
+      "outputChars": 1492,
+      "outputTokens": 500,
+      "totalNodes": 40,
+      "visibleNodes": 34,
+      "levels": {
+        "hidden": 6,
+        "core": 25,
+        "summary": 9,
+        "detail": 0,
+        "full": 0
+      },
+      "profile": {
+        "full": false,
+        "itemLimit": 11,
+        "summaryTop": 0,
+        "detailTop": 0,
+        "fullTop": 0,
+        "rootLevel": 2,
+        "rootInherit": true
+      },
+      "budget": {
+        "bytes": 1500
+      }
+    }
+  }
+}

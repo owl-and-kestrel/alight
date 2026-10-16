@@ -238,6 +238,22 @@ npm run build:native
 ./script/build_and_run.sh --verify
 ```
 
+### Bundled upstream JavaScript
+
+Logic owned by another O+K package is not re-implemented in Swift. Alight runs
+it in JavaScriptCore from one committed bundle,
+`Sources/Alight/Resources/alight-core.js`, built from pinned upstream versions
+by `scripts/build-core.mjs` (`npm run build:core`; `npm run check:core` fails on
+a stale bundle). Today it carries Vane's tree fitter (`@owl-kestrel/vane`);
+`CoreScript` supplies the host SHA-256 its `node:crypto` shim needs, and
+`Vane.swift` mirrors only the contract types Alight uses.
+`VaneConformanceTests` runs Vane's conformance vectors (vendored under
+`Tests/AlightTests/Fixtures/vane-vectors`) through the bundle.
+
+Until `@owl-kestrel/vane@0.1.0` clears the npm dependency cooldown, build with
+`VANE_DIST=<vane checkout with dist/> npm run build:core`; afterwards add the
+exact devDependency and confirm `npm run check:core` passes unchanged.
+
 ## License
 
 MIT

@@ -1,0 +1,110 @@
+{
+  "name": "chirp-message-raise-ignored",
+  "spec": "8.8",
+  "note": "Producer 600 cannot raise caller 300.",
+  "input": {
+    "json": {
+      "message_id": "msg_01H9EXAMPLE",
+      "channel": "estate-coordination",
+      "from": "agent:astra-main",
+      "sent_at": "2026-10-07T18:00:00Z",
+      "status": "delivered",
+      "subject": "Handoff: tree fitter landed locally",
+      "body": "Summary line.\n\nDetails: the fitter now lives in Rectrix.\n- vectors added\n- differential vs Astra passes\n\nNext: review.",
+      "attachments": [
+        {
+          "name": "diff.patch",
+          "bytes": 18234,
+          "sha256": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+        },
+        {
+          "name": "DEMO.md",
+          "bytes": 5120,
+          "sha256": "abababababababababababababababababababababababababababababababab"
+        }
+      ],
+      "next_cursor": "chirp:cursor:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "_lod": {
+        "budget": {
+          "bytes": 600
+        }
+      }
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 300
+    }
+  },
+  "expect": {
+    "mode": "frontier",
+    "text": "- [delivered] Handoff: tree fitter landed locally\n  - message_id: msg_01H9EXAMPLE\n  - channel: estate-coordination\n  - from: agent:astra-main\n  - sent_at: 2026-10-07T18:00:00Z\n  - attachments\n    - diff.patch\n      - bytes: 18234\n    - DEMO.md\n  - next_cursor: omitted:1515B:sha256:0f4a4b918092",
+    "omitted": [
+      {
+        "path": [],
+        "title": "Handoff: tree fitter landed locally",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 0,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "",
+        "sourceKeys": [
+          "body"
+        ]
+      },
+      {
+        "path": [
+          4,
+          0
+        ],
+        "title": "diff.patch",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 1,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "attachments[0]",
+        "sourceKeys": [
+          "sha256"
+        ]
+      },
+      {
+        "path": [
+          4,
+          1
+        ],
+        "title": "DEMO.md",
+        "count": 0,
+        "fieldsHidden": 2,
+        "hiddenNodes": 2,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "attachments[1]",
+        "sourceKeys": [
+          "bytes",
+          "sha256"
+        ]
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 294,
+      "outputChars": 294,
+      "outputTokens": 98,
+      "totalNodes": 13,
+      "visibleNodes": 10,
+      "levels": {
+        "hidden": 3,
+        "core": 7,
+        "summary": 1,
+        "detail": 0,
+        "full": 2
+      },
+      "profile": null,
+      "budget": {
+        "bytes": 300
+      }
+    }
+  }
+}

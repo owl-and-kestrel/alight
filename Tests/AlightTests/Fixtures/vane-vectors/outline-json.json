@@ -1,0 +1,152 @@
+{
+  "name": "outline-json",
+  "spec": "8.3",
+  "note": "Node-shaped JSON for hand-built trees.",
+  "input": {
+    "tree": {
+      "id": "plan",
+      "title": "Release plan",
+      "status": "active",
+      "summary": "Ship text LOD in Rectrix 0.6",
+      "children": [
+        {
+          "id": "t1",
+          "title": "Lock race",
+          "severity": "high",
+          "summary": "stale-lock break can double-refresh",
+          "detail": "Repro: kill -STOP the holder\nthen wait 30s",
+          "ref": "nest:issue:41"
+        },
+        {
+          "id": "t2",
+          "title": "Docs pass",
+          "severity": "low",
+          "summary": "README + SPEC"
+        },
+        {
+          "id": "t3",
+          "title": "Vectors",
+          "status": "blocked",
+          "summary": "needs golden review",
+          "children": [
+            {
+              "title": "text snapshots"
+            },
+            {
+              "title": "json snapshots"
+            },
+            {
+              "title": "astra differential",
+              "priority": 0
+            }
+          ]
+        },
+        {
+          "id": "t4",
+          "title": "Bench",
+          "severity": "low"
+        },
+        {
+          "id": "t5",
+          "title": "Port to Python",
+          "severity": "informational",
+          "summary": "not planned"
+        }
+      ]
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 300
+    },
+    "format": "json"
+  },
+  "expect": {
+    "mode": "frontier",
+    "value": {
+      "id": "plan",
+      "title": "Release plan",
+      "status": "active",
+      "children": [
+        {
+          "id": "t1",
+          "title": "Lock race",
+          "severity": "high",
+          "ref": "nest:issue:41"
+        },
+        {
+          "id": "t3",
+          "title": "Vectors",
+          "status": "blocked",
+          "more": {
+            "count": 3,
+            "by": {
+              "P0": 1
+            }
+          }
+        }
+      ],
+      "more": {
+        "count": 3,
+        "by": {
+          "low": 2,
+          "informational": 1
+        }
+      }
+    },
+    "omitted": [
+      {
+        "path": [],
+        "title": "Release plan",
+        "count": 3,
+        "fieldsHidden": 0,
+        "hiddenNodes": 3,
+        "hiddenIndexes": [
+          1,
+          3,
+          4
+        ],
+        "by": {
+          "low": 2,
+          "informational": 1
+        }
+      },
+      {
+        "path": [
+          2
+        ],
+        "title": "Vectors",
+        "count": 3,
+        "fieldsHidden": 0,
+        "hiddenNodes": 3,
+        "hiddenIndexes": [
+          0,
+          1,
+          2
+        ],
+        "by": {
+          "P0": 1
+        }
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 273,
+      "outputChars": 273,
+      "outputTokens": 91,
+      "totalNodes": 9,
+      "visibleNodes": 3,
+      "levels": {
+        "hidden": 6,
+        "core": 3,
+        "summary": 0,
+        "detail": 0,
+        "full": 0
+      },
+      "profile": null,
+      "budget": {
+        "bytes": 300
+      }
+    }
+  }
+}

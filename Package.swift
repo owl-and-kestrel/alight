@@ -19,12 +19,18 @@ let package = Package(
       dependencies: [
         .product(name: "Sparkle", package: "Sparkle")
       ],
-      path: "Sources/Alight"
+      path: "Sources/Alight",
+      resources: [
+        .copy("Resources/alight-core.js")
+      ]
     ),
     .testTarget(
       name: "AlightTests",
       dependencies: ["Alight"],
-      path: "Tests/AlightTests"
+      path: "Tests/AlightTests",
+      resources: [
+        .copy("Fixtures")
+      ]
     )
   ]
 )

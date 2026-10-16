@@ -1,0 +1,96 @@
+{
+  "name": "outline-ranked-astra",
+  "spec": "8.3 8.4 8.3a",
+  "note": "Astra strategy twin of outline-ranked (outline).",
+  "input": {
+    "tree": {
+      "id": "plan",
+      "title": "Release plan",
+      "status": "active",
+      "summary": "Ship text LOD in Rectrix 0.6",
+      "children": [
+        {
+          "id": "t1",
+          "title": "Lock race",
+          "severity": "high",
+          "summary": "stale-lock break can double-refresh",
+          "detail": "Repro: kill -STOP the holder\nthen wait 30s",
+          "ref": "nest:issue:41"
+        },
+        {
+          "id": "t2",
+          "title": "Docs pass",
+          "severity": "low",
+          "summary": "README + SPEC"
+        },
+        {
+          "id": "t3",
+          "title": "Vectors",
+          "status": "blocked",
+          "summary": "needs golden review",
+          "children": [
+            {
+              "title": "text snapshots"
+            },
+            {
+              "title": "json snapshots"
+            },
+            {
+              "title": "astra differential",
+              "priority": 0
+            }
+          ]
+        },
+        {
+          "id": "t4",
+          "title": "Bench",
+          "severity": "low"
+        },
+        {
+          "id": "t5",
+          "title": "Port to Python",
+          "severity": "informational",
+          "summary": "not planned"
+        }
+      ]
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 330
+    },
+    "strategy": "astra"
+  },
+  "expect": {
+    "mode": "all_items",
+    "text": "- [active] plan: Release plan — Ship text LOD in Rectrix 0.6\n  - [high] t1: Lock race — stale-lock break can double-refresh (ref:nest:issue:41)\n  - [low] t2: Docs pass\n  - [blocked] t3: Vectors\n    - text snapshots\n    - json snapshots\n    - [P0] astra differential\n  - [low] t4: Bench\n  - [informational] t5: Port to Python",
+    "omitted": [],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 328,
+      "outputChars": 324,
+      "outputTokens": 110,
+      "totalNodes": 9,
+      "visibleNodes": 9,
+      "levels": {
+        "hidden": 0,
+        "core": 6,
+        "summary": 3,
+        "detail": 0,
+        "full": 0
+      },
+      "profile": {
+        "full": false,
+        "itemLimit": "Infinity",
+        "summaryTop": 1,
+        "detailTop": 0,
+        "fullTop": 0,
+        "rootLevel": 2,
+        "rootInherit": true
+      },
+      "budget": {
+        "bytes": 330
+      }
+    }
+  }
+}

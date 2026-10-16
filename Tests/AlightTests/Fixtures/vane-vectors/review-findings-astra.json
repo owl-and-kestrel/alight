@@ -1,0 +1,161 @@
+{
+  "name": "review-findings-astra",
+  "spec": "8.2 8.4 8.3a",
+  "note": "Astra strategy twin of review-findings (findings).",
+  "input": {
+    "json": [
+      {
+        "id": "R1",
+        "severity": "medium",
+        "title": "Budget check after receipt",
+        "file": "src/payload-budget.ts",
+        "line": 88,
+        "description": "Receipt is appended after the final measure.",
+        "suggestion": "Measure payload plus receipt."
+      },
+      {
+        "id": "R2",
+        "severity": "critical",
+        "title": "Cursor truncated",
+        "file": "src/relay.ts",
+        "line": 12,
+        "description": "Continuation cursor is cut to 64 chars and becomes a valid-looking prefix.",
+        "suggestion": "Emit a digest descriptor."
+      },
+      {
+        "id": "R3",
+        "severity": "low",
+        "title": "Typo in README",
+        "file": "README.md",
+        "line": 3,
+        "description": "teh → the"
+      },
+      {
+        "id": "R4",
+        "severity": "high",
+        "title": "Unbounded recursion",
+        "file": "src/fit.ts",
+        "line": 200,
+        "description": "Deep trees overflow the stack.",
+        "suggestion": "Cap depth."
+      },
+      {
+        "id": "R5",
+        "severity": "informational",
+        "title": "Consider caching",
+        "file": "src/fit.ts",
+        "line": 310,
+        "description": "Renders repeat during search."
+      }
+    ]
+  },
+  "options": {
+    "budget": {
+      "bytes": 400
+    },
+    "strategy": "astra"
+  },
+  "expect": {
+    "mode": "all_items",
+    "text": "- items\n  - [medium] R1: Budget check after receipt\n  - [critical] R2: Cursor truncated — Continuation cursor is cut to 64 chars and becomes a valid-looking prefix.\n    - file: src/relay.ts\n    - line: 12\n    - suggestion: Emit a digest descriptor.\n  - [low] R3: Typo in README\n  - [high] R4: Unbounded recursion\n  - [informational] R5: Consider caching",
+    "omitted": [
+      {
+        "path": [
+          0
+        ],
+        "title": "Budget check after receipt",
+        "count": 0,
+        "fieldsHidden": 4,
+        "hiddenNodes": 3,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "[0]",
+        "sourceKeys": [
+          "description",
+          "file",
+          "line",
+          "suggestion"
+        ]
+      },
+      {
+        "path": [
+          2
+        ],
+        "title": "Typo in README",
+        "count": 0,
+        "fieldsHidden": 3,
+        "hiddenNodes": 2,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "[2]",
+        "sourceKeys": [
+          "description",
+          "file",
+          "line"
+        ]
+      },
+      {
+        "path": [
+          3
+        ],
+        "title": "Unbounded recursion",
+        "count": 0,
+        "fieldsHidden": 4,
+        "hiddenNodes": 3,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "[3]",
+        "sourceKeys": [
+          "description",
+          "file",
+          "line",
+          "suggestion"
+        ]
+      },
+      {
+        "path": [
+          4
+        ],
+        "title": "Consider caching",
+        "count": 0,
+        "fieldsHidden": 3,
+        "hiddenNodes": 2,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "[4]",
+        "sourceKeys": [
+          "description",
+          "file",
+          "line"
+        ]
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 355,
+      "outputChars": 353,
+      "outputTokens": 119,
+      "totalNodes": 19,
+      "visibleNodes": 9,
+      "levels": {
+        "hidden": 10,
+        "core": 4,
+        "summary": 0,
+        "detail": 0,
+        "full": 5
+      },
+      "profile": {
+        "full": false,
+        "itemLimit": "Infinity",
+        "summaryTop": 1,
+        "detailTop": 1,
+        "fullTop": 1,
+        "rootLevel": 2,
+        "rootInherit": true
+      },
+      "budget": {
+        "bytes": 400
+      }
+    }
+  }
+}

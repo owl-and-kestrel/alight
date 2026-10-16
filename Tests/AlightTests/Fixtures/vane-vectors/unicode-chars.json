@@ -1,0 +1,62 @@
+{
+  "name": "unicode-chars",
+  "spec": "8.1",
+  "note": "chars are code points; bytes are exact UTF-8.",
+  "input": {
+    "tree": {
+      "title": "Überblick 🦉",
+      "children": [
+        {
+          "title": "naïve café ☕",
+          "summary": "日本語の要約"
+        },
+        {
+          "title": "Ελληνικά",
+          "summary": "ελληνική περίληψη"
+        }
+      ]
+    }
+  },
+  "options": {
+    "budget": {
+      "chars": 30
+    }
+  },
+  "expect": {
+    "mode": "frontier",
+    "text": "- Überblick 🦉 (+2 more)",
+    "omitted": [
+      {
+        "path": [],
+        "title": "Überblick 🦉",
+        "count": 2,
+        "fieldsHidden": 0,
+        "hiddenNodes": 2,
+        "hiddenIndexes": [
+          0,
+          1
+        ],
+        "by": {}
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 27,
+      "outputChars": 23,
+      "outputTokens": 9,
+      "totalNodes": 3,
+      "visibleNodes": 1,
+      "levels": {
+        "hidden": 2,
+        "core": 1,
+        "summary": 0,
+        "detail": 0,
+        "full": 0
+      },
+      "profile": null,
+      "budget": {
+        "chars": 30
+      }
+    }
+  }
+}

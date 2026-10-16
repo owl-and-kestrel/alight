@@ -1,0 +1,77 @@
+{
+  "name": "chirp-message",
+  "spec": "8.2 8.6 8.8",
+  "note": "Producer _lod budget 600 lowers the caller's 4096; oversized cursor becomes a descriptor.",
+  "input": {
+    "json": {
+      "message_id": "msg_01H9EXAMPLE",
+      "channel": "estate-coordination",
+      "from": "agent:astra-main",
+      "sent_at": "2026-10-07T18:00:00Z",
+      "status": "delivered",
+      "subject": "Handoff: tree fitter landed locally",
+      "body": "Summary line.\n\nDetails: the fitter now lives in Rectrix.\n- vectors added\n- differential vs Astra passes\n\nNext: review.",
+      "attachments": [
+        {
+          "name": "diff.patch",
+          "bytes": 18234,
+          "sha256": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+        },
+        {
+          "name": "DEMO.md",
+          "bytes": 5120,
+          "sha256": "abababababababababababababababababababababababababababababababab"
+        }
+      ],
+      "next_cursor": "chirp:cursor:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "_lod": {
+        "budget": {
+          "bytes": 600
+        }
+      }
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 4096
+    }
+  },
+  "expect": {
+    "mode": "frontier",
+    "text": "- [delivered] Handoff: tree fitter landed locally\n  - message_id: msg_01H9EXAMPLE\n  - channel: estate-coordination\n  - from: agent:astra-main\n  - sent_at: 2026-10-07T18:00:00Z\n  - attachments\n    - diff.patch\n      - bytes: 18234\n      - sha256: 9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f\n    - DEMO.md\n      - bytes: 5120\n      - sha256: abababababababababababababababababababababababababababababababab\n  - next_cursor: omitted:1515B:sha256:0f4a4b918092",
+    "omitted": [
+      {
+        "path": [],
+        "title": "Handoff: tree fitter landed locally",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 0,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "",
+        "sourceKeys": [
+          "body"
+        ]
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 476,
+      "outputChars": 476,
+      "outputTokens": 159,
+      "totalNodes": 13,
+      "visibleNodes": 13,
+      "levels": {
+        "hidden": 0,
+        "core": 10,
+        "summary": 1,
+        "detail": 0,
+        "full": 2
+      },
+      "profile": null,
+      "budget": {
+        "bytes": 600
+      }
+    }
+  }
+}

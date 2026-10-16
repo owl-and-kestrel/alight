@@ -1,0 +1,166 @@
+{
+  "name": "concord-like-text-1500",
+  "spec": "8.2 8.3",
+  "note": "",
+  "input": {
+    "json": {
+      "schemaVersion": "ok.operations.resume-packet.v1",
+      "cursor": 42,
+      "workstream": {
+        "id": "ws-example-fleet",
+        "title": "Direct access across the example fleet",
+        "responsible": "role:main",
+        "status": "blocked",
+        "priority": 0,
+        "notBefore": null,
+        "reviewAt": "2026-10-03T12:00:00.000Z",
+        "nextAction": "Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit.",
+        "blockers": [
+          {
+            "ref": "feather:linux-host-acceptance",
+            "reason": "Linux lifecycle is qualified but host acceptance has no receipt yet."
+          },
+          {
+            "ref": "fledge:publisher-owner-pickup",
+            "reason": "Publisher owner has not accepted pickup."
+          },
+          {
+            "ref": "feather:connector-incident",
+            "reason": "Hosted connector returns 502 on cold start."
+          }
+        ],
+        "sourceRefs": [
+          "git:flock:00000000",
+          "git:flock:00001eef",
+          "git:flock:00003dde",
+          "git:flock:00005ccd",
+          "git:flock:00007bbc",
+          "git:flock:00009aab",
+          "git:flock:0000b99a",
+          "git:flock:0000d889",
+          "git:flock:0000f778",
+          "git:flock:00011667",
+          "git:flock:00013556",
+          "git:flock:00015445"
+        ],
+        "evidenceRefs": [
+          "nest:work:nestwork_0",
+          "nest:work:nestwork_1",
+          "nest:work:nestwork_2",
+          "nest:work:nestwork_3",
+          "nest:work:nestwork_4",
+          "nest:work:nestwork_5",
+          "nest:work:nestwork_6",
+          "nest:work:nestwork_7",
+          "nest:work:nestwork_8"
+        ],
+        "checkpoint": {
+          "ref": "local:/ops/handoffs/EXAMPLE.md",
+          "observedAt": "2026-10-03T15:18:19.000Z",
+          "pendingOperations": [
+            "op-1 waiting",
+            "op-2 waiting"
+          ]
+        },
+        "attention": [
+          "review_due",
+          "blocked"
+        ]
+      },
+      "note": "Read referenced owner results and reconcile pending effects. This packet grants no authority."
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 1500
+    }
+  },
+  "expect": {
+    "mode": "frontier",
+    "text": "- schemaVersion: ok.operations.resume-packet.v1 — Read referenced owner results and reconcile pending effects. This packet grants no authority.\n  - cursor: 42\n  - [blocked P0] ws-example-fleet: Direct access across the example fleet — Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read reports main at a6ca5fc with no open claim. Next: compare the exact nine paths with the held checkout; record any overlap exactly, or claim only a genuinely disjoint unit. Latest source read…\n    - responsible: role:main\n    - reviewAt: 2026-10-03T12:00:00.000Z\n    - blockers\n      - feather:linux-host-acceptance — Linux lifecycle is qualified but host acceptance has no receipt yet.\n      - fledge:publisher-owner-pickup — Publisher owner has not accepted pickup.\n      - feather:connector-incident — Hosted connector returns 502 on cold start.\n    - sourceRefs\n      - git:flock:00000000\n      - git:flock:00001eef\n      - git:flock:00003dde\n      - git:flock:00005ccd\n      - git:flock:00007bbc\n      - git:flock:00009aab\n      - git:flock:0000b99a\n      + 5 more\n    - evidenceRefs\n      - nest:work:nestwork_0\n      - nest:work:nestwork_1\n      - nest:work:nestwork_2\n      - nest:work:nestwork_3\n      - nest:work:nestwork_4\n      - nest:work:nestwork_5\n      + 3 more\n    - attention\n      - review_due\n      - blocked",
+    "omitted": [
+      {
+        "path": [
+          1
+        ],
+        "title": "Direct access across the example fleet",
+        "count": 0,
+        "fieldsHidden": 1,
+        "hiddenNodes": 5,
+        "hiddenIndexes": [],
+        "by": {},
+        "sourcePath": "workstream",
+        "sourceKeys": [
+          "checkpoint"
+        ]
+      },
+      {
+        "path": [
+          1,
+          3
+        ],
+        "title": "sourceRefs",
+        "count": 5,
+        "fieldsHidden": 0,
+        "hiddenNodes": 5,
+        "hiddenIndexes": [
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        "by": {},
+        "sourcePath": "workstream.sourceRefs",
+        "sourceKeys": [
+          "[7]",
+          "[8]",
+          "[9]",
+          "[10]",
+          "[11]"
+        ]
+      },
+      {
+        "path": [
+          1,
+          4
+        ],
+        "title": "evidenceRefs",
+        "count": 3,
+        "fieldsHidden": 0,
+        "hiddenNodes": 3,
+        "hiddenIndexes": [
+          6,
+          7,
+          8
+        ],
+        "by": {},
+        "sourcePath": "workstream.evidenceRefs",
+        "sourceKeys": [
+          "[6]",
+          "[7]",
+          "[8]"
+        ]
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 1484,
+      "outputChars": 1472,
+      "outputTokens": 495,
+      "totalNodes": 40,
+      "visibleNodes": 27,
+      "levels": {
+        "hidden": 13,
+        "core": 22,
+        "summary": 1,
+        "detail": 0,
+        "full": 4
+      },
+      "profile": null,
+      "budget": {
+        "bytes": 1500
+      }
+    }
+  }
+}

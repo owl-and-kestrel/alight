@@ -1,0 +1,115 @@
+{
+  "name": "outline-item-limit-astra",
+  "spec": "8.3 8.5 8.3a",
+  "note": "Astra strategy twin of outline-item-limit (outline).",
+  "input": {
+    "tree": {
+      "id": "plan",
+      "title": "Release plan",
+      "status": "active",
+      "summary": "Ship text LOD in Rectrix 0.6",
+      "children": [
+        {
+          "id": "t1",
+          "title": "Lock race",
+          "severity": "high",
+          "summary": "stale-lock break can double-refresh",
+          "detail": "Repro: kill -STOP the holder\nthen wait 30s",
+          "ref": "nest:issue:41"
+        },
+        {
+          "id": "t2",
+          "title": "Docs pass",
+          "severity": "low",
+          "summary": "README + SPEC"
+        },
+        {
+          "id": "t3",
+          "title": "Vectors",
+          "status": "blocked",
+          "summary": "needs golden review",
+          "children": [
+            {
+              "title": "text snapshots"
+            },
+            {
+              "title": "json snapshots"
+            },
+            {
+              "title": "astra differential",
+              "priority": 0
+            }
+          ]
+        },
+        {
+          "id": "t4",
+          "title": "Bench",
+          "severity": "low"
+        },
+        {
+          "id": "t5",
+          "title": "Port to Python",
+          "severity": "informational",
+          "summary": "not planned"
+        }
+      ]
+    }
+  },
+  "options": {
+    "budget": {
+      "bytes": 200
+    },
+    "strategy": "astra"
+  },
+  "expect": {
+    "mode": "ranked_items",
+    "text": "- [active] plan: Release plan — Ship text LOD in Rectrix 0.6\n  - [high] t1: Lock race — stale-lock break can double-refresh (ref:nest:issue:41)\n  + 4 more (2 low, 1 blocked, 1 informational)",
+    "omitted": [
+      {
+        "path": [],
+        "title": "Release plan",
+        "count": 4,
+        "fieldsHidden": 0,
+        "hiddenNodes": 7,
+        "hiddenIndexes": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "by": {
+          "low": 2,
+          "blocked": 1,
+          "informational": 1
+        }
+      }
+    ],
+    "refs": [],
+    "metrics": {
+      "outputBytes": 194,
+      "outputChars": 190,
+      "outputTokens": 65,
+      "totalNodes": 9,
+      "visibleNodes": 2,
+      "levels": {
+        "hidden": 7,
+        "core": 0,
+        "summary": 2,
+        "detail": 0,
+        "full": 0
+      },
+      "profile": {
+        "full": false,
+        "itemLimit": 1,
+        "summaryTop": 1,
+        "detailTop": 0,
+        "fullTop": 0,
+        "rootLevel": 2,
+        "rootInherit": true
+      },
+      "budget": {
+        "bytes": 200
+      }
+    }
+  }
+}
