@@ -408,6 +408,7 @@ struct CardCustomizeView: View {
     Form {
       Section {
         ForEach(Array(card.elements.enumerated()), id: \.element.id) { index, element in
+          let hidden = card.hiddenReason(element, windows: availableWindows)
           HStack(spacing: 8) {
             Toggle("", isOn: $card.elements[index].enabled).labelsHidden().toggleStyle(.switch).controlSize(.mini)
             Button {
@@ -418,10 +419,15 @@ struct CardCustomizeView: View {
                   VStack(alignment: .leading, spacing: 1) {
                     Text(element.kind.title)
                     Text(element.summary).font(.caption).foregroundStyle(.secondary)
+                    // Off is already said by the switch.
+                    if let hidden, element.enabled {
+                      Text(hidden).font(.caption).foregroundStyle(.orange)
+                    }
                   }
                 } icon: {
                   Image(systemName: element.kind.systemImage)
                 }
+                .opacity(hidden == nil ? 1 : 0.55)
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(.tertiary)
               }
@@ -484,9 +490,7 @@ struct CardCustomizeView: View {
   }
 
   private func moveElement(_ index: Int, by offset: Int) {
-    let target = index + offset
-    guard card.elements.indices.contains(target) else { return }
-    withAnimation(.snappy) { card.elements.swapAt(index, target) }
+    withAnimation(.snappy) { card.moveElement(at: index, by: offset, windows: availableWindows) }
   }
 }
 

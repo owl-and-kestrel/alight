@@ -152,6 +152,30 @@ struct DashboardTests {
     #expect(card.windows(all, for: meters).map(\.id) == ["claude_slow", "claude_slow_model_fable"])
   }
 
+  @Test("moving an element steps over elements that draw nothing")
+  func elementMovesSkipUndrawn() {
+    // Codex reports only a weekly limit: the default 5-hour chart draws nothing.
+    let weekly = [window(.codex, .slow, used: 20)]
+    var card = DashboardCard(provider: .codex)
+    for index in card.elements.indices { card.elements[index].enabled = true }
+    #expect(card.elements.map { card.draws($0, windows: weekly) } == [true, false, true, true])
+    #expect(card.hiddenReason(card.elements[1], windows: weekly) == "Nothing to show: no 5-hour limits on this card")
+    let ids = card.elements.map(\.id)
+
+    // The weekly chart moving up passes the empty 5-hour chart and lands above Limits.
+    card.moveElement(at: 2, by: -1, windows: weekly)
+    #expect(card.elements.map(\.id) == [ids[2], ids[0], ids[1], ids[3]])
+    // Limits moving down passes the empty chart and lands below Runway.
+    card.moveElement(at: 1, by: 1, windows: weekly)
+    #expect(card.elements.map(\.id) == [ids[2], ids[1], ids[3], ids[0]])
+    // At the end nothing moves.
+    card.moveElement(at: 3, by: 1, windows: weekly)
+    #expect(card.elements.map(\.id) == [ids[2], ids[1], ids[3], ids[0]])
+
+    card.elements[0].enabled = false
+    #expect(card.hiddenReason(card.elements[0], windows: weekly) == "Off")
+  }
+
   @Test("a custom label replaces a limit's name on that card only")
   func labels() {
     let fable = window(.claude, .slow, used: 20, scope: .fable)

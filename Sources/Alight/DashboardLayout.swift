@@ -387,6 +387,37 @@ struct DashboardCard: Codable, Equatable, Identifiable, Sendable {
     windows.filter(element.windows.includes)
   }
 
+  /// Whether `element` draws anything with these windows.
+  func draws(_ element: CardElement, windows: [UsageWindow]) -> Bool {
+    element.enabled && !self.windows(windows, for: element).isEmpty
+  }
+
+  /// Why `element` draws nothing, or nil when it draws.
+  func hiddenReason(_ element: CardElement, windows: [UsageWindow]) -> String? {
+    guard element.enabled else { return "Off" }
+    guard self.windows(windows, for: element).isEmpty else { return nil }
+    switch element.windows.span {
+    case .all: return windows.isEmpty ? "No limits reported yet" : "Every limit is hidden"
+    case .short: return "Nothing to show: no 5-hour limits on this card"
+    case .long: return "Nothing to show: no weekly limits on this card"
+    }
+  }
+
+  /// Moves an element one step among the elements that draw, passing over
+  /// those that do not, so moving a visible element always moves it on the
+  /// card. With only undrawn elements ahead, it goes to that end.
+  mutating func moveElement(at index: Int, by step: Int, windows: [UsageWindow]) {
+    guard elements.indices.contains(index), step != 0 else { return }
+    let direction = step < 0 ? -1 : 1
+    var target = index + direction
+    while elements.indices.contains(target), !draws(elements[target], windows: windows) {
+      target += direction
+    }
+    target = min(max(target, 0), elements.count - 1)
+    guard target != index else { return }
+    elements.insert(elements.remove(at: index), at: target)
+  }
+
   /// The card's name for a limit: its custom label, or the limit's own.
   func label(for window: UsageWindow) -> String {
     let custom = windowSettings[window.id]?.label?.trimmingCharacters(in: .whitespacesAndNewlines)
