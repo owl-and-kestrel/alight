@@ -31,6 +31,9 @@ enum DashboardRenderHarness {
       card: .constant(layout.cards[1]),
       availableWindows: status.result(for: .claude)?.windows.sorted(by: DashboardCard.displayOrder) ?? [],
       color: actions.color(.claude),
+      result: status.result(for: .claude),
+      history: history,
+      now: now,
       onDone: {},
       onRemove: {}
     )

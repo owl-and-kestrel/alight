@@ -11,6 +11,15 @@ struct ProviderCardView: View {
   var onSignIn: () -> Void = {}
   var onCustomize: () -> Void = {}
   var onRemove: () -> Void = {}
+  /// Moves the card one slot (-1 up, +1 down); nil hides the move commands.
+  var onMove: ((Int) -> Void)? = nil
+  var canMove: (up: Bool, down: Bool) = (false, false)
+  /// Dragging the header reports the vertical translation, then the end;
+  /// nil makes the header inert (the Customize preview).
+  var onReorderChanged: ((CGFloat) -> Void)? = nil
+  var onReorderEnded: (() -> Void)? = nil
+
+  @State private var isReordering = false
 
   private var windows: [UsageWindow] {
     (result?.windows ?? []).filter { !card.hiddenWindowIDs.contains($0.id) }.sorted(by: DashboardCard.displayOrder)
@@ -42,8 +51,17 @@ struct ProviderCardView: View {
     .contextMenu {
       Button("Customize…", action: onCustomize)
       if result?.needsAuth == true { Button("Sign In to \(card.provider.displayName)…", action: onSignIn) }
+      moveCommands
       Divider()
       Button("Remove Card", role: .destructive, action: onRemove)
+    }
+  }
+
+  @ViewBuilder private var moveCommands: some View {
+    if let onMove {
+      Divider()
+      Button("Move Up") { onMove(-1) }.disabled(!canMove.up)
+      Button("Move Down") { onMove(1) }.disabled(!canMove.down)
     }
   }
 
@@ -57,6 +75,8 @@ struct ProviderCardView: View {
       statusBadge
       Menu {
         Button("Customize…", action: onCustomize)
+        moveCommands
+        Divider()
         Button("Remove Card", role: .destructive, action: onRemove)
       } label: {
         Image(systemName: "ellipsis").frame(width: 18, height: 18)
@@ -66,6 +86,13 @@ struct ProviderCardView: View {
       .fixedSize()
       .foregroundStyle(.secondary)
     }
+    .contentShape(Rectangle())
+    .modifier(ReorderHandle(
+      isEnabled: onReorderChanged != nil,
+      isReordering: $isReordering,
+      onChanged: { onReorderChanged?($0) },
+      onEnded: { onReorderEnded?() }
+    ))
   }
 
   @ViewBuilder private var statusBadge: some View {
@@ -144,6 +171,44 @@ struct ProviderCardView: View {
           RunwayText(forecast: forecast, now: now)
         }
       }
+    }
+  }
+}
+
+/// Makes a card's header its drag handle: an open hand on hover, a closed
+/// hand while dragging, and the vertical translation reported as it moves.
+/// Clicks on the header's buttons still go to them (a drag needs movement).
+private struct ReorderHandle: ViewModifier {
+  let isEnabled: Bool
+  @Binding var isReordering: Bool
+  let onChanged: (CGFloat) -> Void
+  let onEnded: () -> Void
+
+  func body(content: Content) -> some View {
+    if isEnabled {
+      content
+        .onHover { inside in
+          guard !isReordering else { return }
+          (inside ? NSCursor.openHand : NSCursor.arrow).set()
+        }
+        .gesture(
+          DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .onChanged { value in
+              if !isReordering {
+                isReordering = true
+                NSCursor.closedHand.set()
+              }
+              onChanged(value.translation.height)
+            }
+            .onEnded { _ in
+              isReordering = false
+              NSCursor.openHand.set()
+              onEnded()
+            }
+        )
+        .help("Drag to reorder")
+    } else {
+      content
     }
   }
 }

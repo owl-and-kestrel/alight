@@ -215,6 +215,14 @@ struct DashboardLayout: Codable, Equatable, Sendable {
     cards.insert(cards.remove(at: from), at: to)
   }
 
+  /// Moves the card at `fromIndex` to `toIndex` (both clamped).
+  mutating func move(fromIndex: Int, toIndex: Int) {
+    guard cards.indices.contains(fromIndex) else { return }
+    let to = min(max(0, toIndex), cards.count - 1)
+    guard to != fromIndex else { return }
+    cards.insert(cards.remove(at: fromIndex), at: to)
+  }
+
   mutating func add(_ provider: Provider) {
     cards.append(DashboardCard(provider: provider))
   }

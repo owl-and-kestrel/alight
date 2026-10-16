@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// What the popover can ask its host to do.
 struct DashboardActions {
@@ -47,8 +46,12 @@ struct DashboardView: View {
   var scrollsCards = true
 
   @State private var customizing: UUID?
-  @State private var dragging: UUID?
   @State private var listHeight: CGFloat = 0
+  /// The card being dragged, how far it has moved, and every card's height,
+  /// for the live reorder.
+  @State private var dragging: UUID?
+  @State private var dragTranslation: CGFloat = 0
+  @State private var cardHeights: [UUID: CGFloat] = [:]
 
   var body: some View {
     Group {
@@ -57,6 +60,9 @@ struct DashboardView: View {
           card: Binding(get: { layout[id] ?? card }, set: { layout[id] = $0 }),
           availableWindows: availableWindows(for: card.provider),
           color: actions.color(card.provider),
+          result: status.result(for: card.provider),
+          history: history,
+          now: now,
           onDone: { withAnimation(.snappy) { customizing = nil } },
           onRemove: {
             withAnimation(.snappy) {
@@ -141,41 +147,75 @@ struct DashboardView: View {
         cardStack.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
       }
       .frame(height: min(max(listHeight, 80), Self.maximumListHeight))
-        // A drag released outside any card still ends the drag.
-        .onDrop(of: [.text], isTargeted: nil) { _ in
-          dragging = nil
-          return true
-        }
     } else {
       cardStack
     }
   }
 
   private var cardStack: some View {
-      VStack(spacing: 10) {
-        ForEach(layout.cards) { card in
-          ProviderCardView(
-            card: card,
-            result: status.result(for: card.provider),
-            history: history,
-            color: actions.color(card.provider),
-            now: now,
-            onSignIn: { actions.signIn(card.provider) },
-            onCustomize: { withAnimation(.snappy) { customizing = card.id } },
-            onRemove: { withAnimation(.snappy) { layout.remove(card.id) } }
-          )
-          .opacity(dragging == card.id ? 0.35 : 1)
-          .onDrag {
+    let heights = layout.cards.map { cardHeights[$0.id] ?? 0 }
+    let from = dragging.flatMap { id in layout.cards.firstIndex { $0.id == id } }
+    let target = from.map {
+      CardReorder.targetIndex(heights: heights, spacing: CardReorder.spacing, from: $0, translation: dragTranslation)
+    }
+    return VStack(spacing: CardReorder.spacing) {
+      ForEach(Array(layout.cards.enumerated()), id: \.element.id) { index, card in
+        let isDragged = card.id == dragging
+        let shift = from.flatMap { from in
+          target.map { CardReorder.shift(index: index, heights: heights, spacing: CardReorder.spacing, from: from, target: $0) }
+        } ?? 0
+        ProviderCardView(
+          card: card,
+          result: status.result(for: card.provider),
+          history: history,
+          color: actions.color(card.provider),
+          now: now,
+          onSignIn: { actions.signIn(card.provider) },
+          onCustomize: { withAnimation(.snappy) { customizing = card.id } },
+          onRemove: { withAnimation(.snappy) { layout.remove(card.id) } },
+          onMove: { offset in
+            withAnimation(.snappy) { layout.move(fromIndex: index, toIndex: index + offset) }
+          },
+          canMove: (up: index > 0, down: index < layout.cards.count - 1),
+          onReorderChanged: { translation in
             dragging = card.id
-            return NSItemProvider(object: card.id.uuidString as NSString)
-          }
-          .onDrop(of: [.text], delegate: CardDropDelegate(target: card.id, layout: $layout, dragging: $dragging))
-        }
-        if layout.cards.isEmpty {
-          emptyLayout
-        }
+            dragTranslation = translation
+          },
+          onReorderEnded: { endReorder() }
+        )
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeights[card.id] = $0 }
+        // The dragged card follows the pointer exactly; the others spring
+        // aside as it passes their middles.
+        .offset(y: isDragged ? dragTranslation : shift)
+        .animation(isDragged ? nil : .spring(response: 0.28, dampingFraction: 0.86), value: shift)
+        .scaleEffect(isDragged ? 1.02 : 1)
+        .shadow(color: .black.opacity(isDragged ? 0.22 : 0), radius: isDragged ? 14 : 0, y: isDragged ? 8 : 0)
+        .animation(.easeOut(duration: 0.14), value: isDragged)
+        .zIndex(isDragged ? 1 : 0)
       }
-      .padding(12)
+      if layout.cards.isEmpty {
+        emptyLayout
+      }
+    }
+    .padding(12)
+  }
+
+  /// Drops the dragged card into its slot. The order change and the offset
+  /// reset animate together, so the card glides from where it was released
+  /// and the others stay where they already slid to.
+  private func endReorder() {
+    guard let dragging, let from = layout.cards.firstIndex(where: { $0.id == dragging }) else {
+      self.dragging = nil
+      dragTranslation = 0
+      return
+    }
+    let heights = layout.cards.map { cardHeights[$0.id] ?? 0 }
+    let target = CardReorder.targetIndex(heights: heights, spacing: CardReorder.spacing, from: from, translation: dragTranslation)
+    withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+      layout.move(fromIndex: from, toIndex: target)
+      self.dragging = nil
+      dragTranslation = 0
+    }
   }
 
   private var emptyLayout: some View {
@@ -213,34 +253,57 @@ struct DashboardView: View {
   }
 }
 
-/// Live reorder: hovering a dragged card over another moves it into that slot.
-private struct CardDropDelegate: DropDelegate {
-  let target: UUID
-  @Binding var layout: DashboardLayout
-  @Binding var dragging: UUID?
+/// Reorder geometry for a vertical stack of cards: where a dragged card
+/// lands and how far the others step aside. Pure, for testing.
+enum CardReorder {
+  static let spacing: CGFloat = 10
 
-  func dropEntered(info: DropInfo) {
-    guard let dragging, dragging != target else { return }
-    withAnimation(.snappy(duration: 0.22)) {
-      layout.move(dragging, toPositionOf: target)
+  /// Moving down, the card takes a slot once its bottom edge passes that
+  /// card's middle; moving up, once its top edge does.
+  static func targetIndex(heights: [CGFloat], spacing: CGFloat, from: Int, translation: CGFloat) -> Int {
+    guard heights.indices.contains(from) else { return from }
+    var tops: [CGFloat] = []
+    var y: CGFloat = 0
+    for height in heights {
+      tops.append(y)
+      y += height + spacing
     }
+    let top = tops[from] + translation
+    let bottom = top + heights[from]
+    var target = from
+    if translation > 0 {
+      for index in heights.indices where index > from && bottom > tops[index] + heights[index] / 2 {
+        target = index
+      }
+    } else if translation < 0 {
+      for index in heights.indices.reversed() where index < from && top < tops[index] + heights[index] / 2 {
+        target = index
+      }
+    }
+    return target
   }
 
-  func dropUpdated(info: DropInfo) -> DropProposal? {
-    DropProposal(operation: .move)
-  }
-
-  func performDrop(info: DropInfo) -> Bool {
-    dragging = nil
-    return true
+  /// How far a card that is not being dragged moves to open `target`.
+  static func shift(index: Int, heights: [CGFloat], spacing: CGFloat, from: Int, target: Int) -> CGFloat {
+    guard heights.indices.contains(from), index != from else { return 0 }
+    let gap = heights[from] + spacing
+    if from < target, index > from, index <= target { return -gap }
+    if from > target, index >= target, index < from { return gap }
+    return 0
   }
 }
 
-/// A card's settings, shown in place of the list.
+/// A card's settings, shown in place of the list, under a live preview of
+/// the card so every change shows as it is made.
 struct CardCustomizeView: View {
+  static let settingsHeight: CGFloat = 330
+
   @Binding var card: DashboardCard
   let availableWindows: [UsageWindow]
   let color: Color
+  let result: ProviderResult?
+  let history: UsageHistory
+  let now: Date
   let onDone: () -> Void
   let onRemove: () -> Void
 
@@ -261,6 +324,13 @@ struct CardCustomizeView: View {
       }
       .padding(.horizontal, 14)
       .padding(.vertical, 10)
+      Divider()
+
+      ProviderCardView(card: card, result: result, history: history, color: color, now: now)
+        .allowsHitTesting(false)
+        .animation(.snappy, value: card)
+        .padding(12)
+        .accessibilityLabel("Preview of the \(card.provider.displayName) card")
       Divider()
 
       Form {
@@ -317,8 +387,8 @@ struct CardCustomizeView: View {
       }
       .formStyle(.grouped)
       .scrollContentBackground(.hidden)
+      .frame(height: Self.settingsHeight)
     }
-    .frame(height: 560)
   }
 
   private func moveElement(_ index: Int, by offset: Int) {

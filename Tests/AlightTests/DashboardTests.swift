@@ -26,6 +26,52 @@ struct DashboardTests {
     #expect(layout.cards.map(\.id) == ids)
   }
 
+  @Test("index moves clamp and keep every card")
+  func moveByIndex() {
+    var layout = DashboardLayout.defaultLayout(order: [.codex, .claude, .antigravity])
+    layout.move(fromIndex: 0, toIndex: 2)
+    #expect(layout.cards.map(\.provider) == [.claude, .antigravity, .codex])
+    layout.move(fromIndex: 2, toIndex: -5)
+    #expect(layout.cards.map(\.provider) == [.codex, .claude, .antigravity])
+    layout.move(fromIndex: 7, toIndex: 0)
+    #expect(layout.cards.count == 3)
+  }
+
+  @Test("a dragged card takes a slot once its leading edge passes that card's middle")
+  func reorderTarget() {
+    // Three cards 100, 200 and 100 tall, 10 apart: tops 0, 110, 320.
+    let heights: [CGFloat] = [100, 200, 100]
+    func target(_ from: Int, _ translation: CGFloat) -> Int {
+      CardReorder.targetIndex(heights: heights, spacing: 10, from: from, translation: translation)
+    }
+    #expect(target(0, 0) == 0)
+    // Card 0's bottom (100 + t) passes card 1's middle (210) after t = 110.
+    #expect(target(0, 109) == 0)
+    #expect(target(0, 111) == 1)
+    // And card 2's middle (370) after t = 270.
+    #expect(target(0, 271) == 2)
+    #expect(target(0, 5000) == 2)
+    // Card 2's top (320 + t) passes card 1's middle (210) going up after t = -110.
+    #expect(target(2, -109) == 2)
+    #expect(target(2, -111) == 1)
+    #expect(target(2, -5000) == 0)
+  }
+
+  @Test("cards between the origin and the target step aside by the dragged card's height")
+  func reorderShift() {
+    let heights: [CGFloat] = [100, 200, 100]
+    func shift(_ index: Int, from: Int, to: Int) -> CGFloat {
+      CardReorder.shift(index: index, heights: heights, spacing: 10, from: from, target: to)
+    }
+    #expect(shift(1, from: 0, to: 2) == -110)
+    #expect(shift(2, from: 0, to: 2) == -110)
+    #expect(shift(2, from: 0, to: 1) == 0)
+    #expect(shift(0, from: 2, to: 0) == 110)
+    #expect(shift(1, from: 2, to: 1) == 110)
+    #expect(shift(0, from: 2, to: 1) == 0)
+    #expect(shift(0, from: 0, to: 2) == 0)
+  }
+
   @Test("any number of cards, including several per provider; provider order is first appearance")
   func addRemoveAndProviderOrder() {
     var layout = DashboardLayout(cards: [])
