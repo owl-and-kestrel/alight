@@ -51,9 +51,13 @@ struct FieldbookProviderUsage: Decodable, Equatable, Sendable {
   /// Alight's windows for this usage. A window the provider has not started
   /// (no reset reported, nothing used) resets one window after the reading,
   /// as Alight's clients read it; any other window without a reset or a
-  /// duration cannot be placed and is left out.
+  /// duration cannot be placed and is left out. A provider group's windows
+  /// are secondary (dashboard-only) beside the provider's broad limits, but
+  /// when a provider reports only group windows (an Antigravity account with
+  /// no Gemini group) they are its limits and draw in the menu bar.
   func usageWindows() -> [UsageWindow] {
-    windows.compactMap { window in
+    let hasBroadLimits = windows.contains { $0.scope == nil }
+    return windows.compactMap { window in
       guard let seconds = window.windowSeconds, seconds > 0, let observedAt = FieldbookTime.date(window.observedAt) else { return nil }
       let resetAt: Date
       if let reported = window.resetAt.flatMap(FieldbookTime.date) {
@@ -69,7 +73,13 @@ struct FieldbookProviderUsage: Decodable, Equatable, Sendable {
         scope = reported.kind == UsageScope.fable.kind && reported.key == UsageScope.fable.key
           ? .fable
           : UsageScope(kind: reported.kind, key: reported.key, displayName: reported.displayName)
-        style = scope == .fable ? .outerStar : .menuRow
+        if scope == .fable {
+          style = .outerStar
+        } else if reported.kind == "group", !hasBroadLimits {
+          style = .hand
+        } else {
+          style = .menuRow
+        }
       }
       return PressureMath.window(
         provider: provider, speed: .cadence(for: seconds), usedPercent: window.usedPct, resetAt: resetAt,

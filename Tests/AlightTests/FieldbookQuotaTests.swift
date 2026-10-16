@@ -185,6 +185,28 @@ struct FieldbookQuotaTests {
     #expect(windows.first { $0.id == "antigravity_fast" }?.usedPercent == 25)
   }
 
+  @Test("an Antigravity account with only a secondary group gets those limits in the menu bar")
+  func onlyGroupLimitsDraw() throws {
+    let payload: [String: Any] = ["groups": [
+      ["displayName": "Claude and GPT models", "buckets": [
+        ["bucketId": "3p-5h", "window": "5h", "resetTime": "2027-01-15T10:00:00Z", "remainingFraction": 0.7],
+        ["bucketId": "3p-weekly", "window": "weekly", "resetTime": "2027-01-20T10:00:00Z", "remainingFraction": 0.6],
+      ]],
+    ]]
+    var result = ProviderResult(provider: .antigravity, ok: true, source: "live", error: nil,
+      windows: AntigravityUsageParser.windows(from: payload, now: Self.now))
+    result.quotaReport = AntigravityUsageParser.quotaReport(from: payload)
+    let reading = try CoreScript.shared.get().normalizeAlightQuotaSnapshot(try Self.snapshot([result]), readAt: Self.now)
+    let windows = try #require(reading.usage(for: .antigravity)).usageWindows()
+    #expect(windows.count == 2)
+    #expect(windows.allSatisfy { $0.visualStyle == .hand })
+    #expect(Set(windows.map(\.label)) == ["Claude and GPT models (5h)", "Claude and GPT models (Weekly)"])
+
+    let status = UsageStatus(generatedAt: Self.now, results: [result.replacingWindows(windows)])
+    let shown = MenuBarRelevance.select(status: status, layout: .defaultLayout())
+    #expect(shown.windows.count == 2)
+  }
+
   @Test("shown results keep Alight's status and take Fieldbook's windows")
   func shownResults() throws {
     let codex = try Self.codexResult(used: 7)

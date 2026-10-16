@@ -58,6 +58,7 @@ enum DashboardRenderHarness {
       (.darkAqua, AnyView(DashboardView(status: status, history: history, layout: .constant(layout), now: now, actions: actions, scrollsCards: false))),
       (.aqua, AnyView(customize)),
       (.aqua, AnyView(elementPage)),
+      (.aqua, AnyView(MenuBarSettingsView(status: status, layout: .constant(layout), actions: actions, onDone: {}))),
     ]
     let images = pages.map { name, page -> NSBitmapImageRep? in
       // An offscreen window draws AppKit-backed controls (menus, context

@@ -71,7 +71,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         self?.popover.performClose(nil)
         CLISignIn.launch(provider)
       },
-      color: { provider in Color(nsColor: GaugeIconRenderer.providerColor(provider, style: AppSettings.iconStyle)) }
+      color: { provider in Color(nsColor: GaugeIconRenderer.providerColor(provider, style: AppSettings.iconStyle)) },
+      setDisplayMode: { [weak self] mode in
+        AppSettings.displayMode = mode
+        self?.applyIconSettingChange()
+      }
     )
   }
 
@@ -133,19 +137,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
   private func updateIcon() {
     // The icon draws only the most relevant windows; the tooltip still
     // summarizes everything.
-    let shown = MenuBarRelevance.select(status: store.status, layout: layoutStore.layout)
-    let mode = AppSettings.displayMode
-    let image: NSImage
-    switch mode {
-    case .gauge:
-      statusItem.length = 24
-      image = GaugeIconRenderer.image(status: shown, style: AppSettings.iconStyle)
-    case .meters:
-      let style = AppSettings.meterStyle
-      statusItem.length = MeterIconRenderer.size(for: style).width + 6
-      image = MeterIconRenderer.image(status: shown, style: style)
-    }
-    statusItem.button?.image = image
+    let icon = MenuBarRelevance.icon(status: store.status, layout: layoutStore.layout)
+    statusItem.length = icon.width
+    statusItem.button?.image = icon.image
     statusItem.button?.toolTip = store.status.summary
   }
 
@@ -202,7 +196,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         "\(result.provider.rawValue) ok=\(result.ok) source=\(result.source) needsAuth=\(result.needsAuth) " +
           "windows=\(result.windows.map(\.id)) error=\(result.error ?? "none")"
       }
-      try? lines.joined(separator: "\n").write(toFile: String(command.dropFirst("status:".count)), atomically: true, encoding: .utf8)
+      let menuBar = MenuBarRelevance.select(status: store.status, layout: layoutStore.layout).windows.map(\.id)
+      let report = lines + ["menubar limit=\(layoutStore.layout.menuBarLimit) mode=\(AppSettings.displayMode.rawValue) shows=\(menuBar)"]
+      try? report.joined(separator: "\n").write(toFile: String(command.dropFirst("status:".count)), atomically: true, encoding: .utf8)
       return
     }
     if !popover.isShown { togglePopover() }

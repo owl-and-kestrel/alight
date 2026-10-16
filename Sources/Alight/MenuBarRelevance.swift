@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import OSLog
 
 /// Chooses what the menu-bar icon shows: the `limit` most relevant windows
@@ -68,5 +68,20 @@ enum MenuBarRelevance {
       result.replacingWindows(result.windows.filter { selected.contains($0.id) })
     }
     return reduced
+  }
+
+  /// The menu-bar icon for `status`: the selected windows drawn in `mode`,
+  /// and the status item width it needs. The status item and the Menu Bar
+  /// settings preview both use this, so the preview is the icon.
+  @MainActor
+  static func icon(status: UsageStatus, layout: DashboardLayout, mode: DisplayMode = AppSettings.displayMode) -> (image: NSImage, width: CGFloat) {
+    let shown = select(status: status, layout: layout)
+    switch mode {
+    case .gauge:
+      return (GaugeIconRenderer.image(status: shown, style: AppSettings.iconStyle), 24)
+    case .meters:
+      let style = AppSettings.meterStyle
+      return (MeterIconRenderer.image(status: shown, style: style), MeterIconRenderer.size(for: style).width + 6)
+    }
   }
 }

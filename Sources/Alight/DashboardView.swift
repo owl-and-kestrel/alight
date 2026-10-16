@@ -9,6 +9,7 @@ struct DashboardActions {
   var quit: () -> Void = {}
   var signIn: (Provider) -> Void = { _ in }
   var color: (Provider) -> Color = { _ in .accentColor }
+  var setDisplayMode: (DisplayMode) -> Void = { AppSettings.displayMode = $0 }
 }
 
 /// Live host: reads the shared store and layout, so the popover follows every
@@ -46,6 +47,7 @@ struct DashboardView: View {
   var scrollsCards = true
 
   @State private var customizing: UUID?
+  @State private var showingMenuBar = false
   @State private var listHeight: CGFloat = 0
   /// The card being dragged, how far it has moved, and every card's height,
   /// for the live reorder.
@@ -70,6 +72,14 @@ struct DashboardView: View {
               layout.remove(id)
             }
           }
+        )
+        .transition(.move(edge: .trailing).combined(with: .opacity))
+      } else if showingMenuBar {
+        MenuBarSettingsView(
+          status: status,
+          layout: $layout,
+          actions: actions,
+          onDone: { withAnimation(.snappy) { showingMenuBar = false } }
         )
         .transition(.move(edge: .trailing).combined(with: .opacity))
       } else {
@@ -113,11 +123,7 @@ struct DashboardView: View {
         Button("Settings…", action: actions.openSettings)
         Button("Check for Updates…", action: actions.checkForUpdates)
         Divider()
-        Picker("Menu Bar Shows", selection: $layout.menuBarLimit) {
-          ForEach(DashboardLayout.menuBarLimits, id: \.self) { count in
-            Text(count == 1 ? "Most Relevant Limit" : "Top \(count) Limits").tag(count)
-          }
-        }
+        Button("Menu Bar…") { withAnimation(.snappy) { showingMenuBar = true } }
         Button("Reset Cards") { withAnimation(.snappy) { layout = .defaultLayout() } }
         Divider()
         Button("Quit Alight", action: actions.quit)
@@ -609,6 +615,120 @@ private struct ElementSettingsForm: View {
     Section("Display") {
       Toggle("Projection at reset", isOn: $element.showsProjectionAtReset)
       Toggle("Sustainable pace", isOn: $element.showsSustainablePace)
+    }
+  }
+}
+
+/// What the menu-bar icon shows and how: a live preview of the icon itself,
+/// its style, how many limits, and each limit's presence.
+struct MenuBarSettingsView: View {
+  let status: UsageStatus
+  @Binding var layout: DashboardLayout
+  let actions: DashboardActions
+  let onDone: () -> Void
+
+  @State private var mode = AppSettings.displayMode
+
+  /// Every limit on some card, once, with the first card that shows it.
+  private var limits: [(card: Int, window: UsageWindow)] {
+    var seen = Set<String>()
+    return layout.cards.indices.flatMap { index in
+      layout.cards[index].windows(in: status).map { (card: index, window: $0) }
+    }
+    .filter { seen.insert($0.window.id).inserted }
+  }
+
+  var body: some View {
+    let icon = MenuBarRelevance.icon(status: status, layout: layout, mode: mode)
+    let shown = Set(MenuBarRelevance.select(status: status, layout: layout).windows.map(\.id))
+    VStack(spacing: 0) {
+      HStack {
+        Button(action: onDone) { Label("Cards", systemImage: "chevron.left") }
+          .buttonStyle(.borderless)
+        Spacer()
+        Text("Menu Bar").font(.headline)
+        Spacer()
+        Button("Done", action: onDone).keyboardShortcut(.defaultAction).controlSize(.small)
+      }
+      .padding(.horizontal, 14)
+      .padding(.vertical, 10)
+      Divider()
+
+      // The icon as it is drawn now, on a menu-bar-like strip.
+      HStack {
+        Spacer()
+        Image(nsImage: icon.image)
+          .interpolation(.high)
+          .scaleEffect(2)
+          .frame(width: icon.image.size.width * 2, height: icon.image.size.height * 2)
+        Spacer()
+      }
+      .padding(.vertical, 14)
+      .background(Color.primary.opacity(0.06))
+      .accessibilityLabel("Menu-bar icon preview")
+      Divider()
+
+      Form {
+        Section {
+          Picker("Style", selection: $mode) {
+            ForEach(DisplayMode.allCases, id: \.self) { Text($0.menuTitle).tag($0) }
+          }
+          .pickerStyle(.segmented)
+          .onChange(of: mode) { _, newValue in actions.setDisplayMode(newValue) }
+          Picker("Shows", selection: $layout.menuBarLimit) {
+            ForEach(DashboardLayout.menuBarLimits, id: \.self) { count in
+              Text(count == 1 ? "1 limit" : "\(count) limits").tag(count)
+            }
+          }
+          Button("More Icon Settings…", action: actions.openSettings)
+        } footer: {
+          Text("Limits set to Always are shown first; the rest are the most relevant: running over pace or nearly used up.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+
+        Section("Limits") {
+          ForEach(limits, id: \.window.id) { entry in
+            limitRow(entry.card, entry.window, isShown: shown.contains(entry.window.id))
+          }
+        }
+      }
+      .formStyle(.grouped)
+      .scrollContentBackground(.hidden)
+      .frame(height: 380)
+    }
+  }
+
+  @ViewBuilder
+  private func limitRow(_ cardIndex: Int, _ window: UsageWindow, isShown: Bool) -> some View {
+    let card = layout.cards[cardIndex]
+    HStack(spacing: 8) {
+      Circle().fill(actions.color(window.provider)).frame(width: 8, height: 8)
+      VStack(alignment: .leading, spacing: 1) {
+        Text(card.label(for: window))
+        Text(window.provider.displayName).font(.caption).foregroundStyle(.secondary)
+      }
+      Spacer()
+      if window.visualStyle == .menuRow {
+        Text("Card only").font(.caption).foregroundStyle(.secondary)
+          .help("A secondary limit beside this provider's main limits has no menu-bar mark.")
+      } else {
+        if isShown {
+          Image(systemName: "menubar.rectangle").foregroundStyle(.secondary).help("In the menu bar now")
+        }
+        Picker("", selection: Binding(
+          get: { layout.cards[cardIndex].menuBarPresence(for: window) },
+          set: { presence in
+            var settings = layout.cards[cardIndex].windowSettings[window.id] ?? WindowSettings()
+            settings.menuBar = presence
+            layout.cards[cardIndex].windowSettings[window.id] = settings == WindowSettings() ? nil : settings
+          }
+        )) {
+          ForEach(MenuBarPresence.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .fixedSize()
+      }
     }
   }
 }
