@@ -101,9 +101,13 @@ struct QuotaOutbox: Sendable {
     let day = Self.dayName(writtenAt)
     do {
       try write(entry, day: day)
-      // The sequence file only speeds continuity across full expiry; the day
-      // files stay the record, so a failure here is not an append failure.
-      try? storeSequence(entry.sequence)
+      // The sequence file only keeps numbering across full expiry; the day
+      // files stay the record, so a failure here is reported, not fatal.
+      do {
+        try storeSequence(entry.sequence)
+      } catch {
+        Self.logger.error("Outbox sequence checkpoint not saved: \(String(describing: error), privacy: .public)")
+      }
       if day != lastWrittenDay {
         // A long-running app crosses days without reloading.
         removeExpiredFiles(now: writtenAt)

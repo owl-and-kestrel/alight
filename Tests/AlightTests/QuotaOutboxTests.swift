@@ -227,6 +227,30 @@ struct QuotaOutboxTests {
     #expect(FileManager.default.fileExists(atPath: url.path))
   }
 
+  @Test("a repeated cached capture is not a clock reversal for the other providers")
+  func repeatedCachedCapture() throws {
+    func reading(_ provider: Provider, _ speed: WindowSpeed, used: Double, at date: Date) -> ProviderResult {
+      let window = PressureMath.window(provider: provider, speed: speed, usedPercent: used, resetAt: start.addingTimeInterval(9000),
+        limitWindowSeconds: speed == .fast ? 18000 : 604800, now: date)
+      return ProviderResult(provider: provider, ok: true, source: "live", error: nil, windows: [window], observationIdentity: identity)
+    }
+    var history = UsageHistory(persistenceURL: nil, now: start)
+    history.record(reading(.codex, .slow, used: 3, at: start.addingTimeInterval(30)), capturedAt: start.addingTimeInterval(30))
+    history.record(reading(.antigravity, .fast, used: 1, at: start.addingTimeInterval(50)), capturedAt: start.addingTimeInterval(50))
+    // The next snapshot repeats Codex's cached capture, then a fresh Antigravity reading.
+    history.record(reading(.codex, .slow, used: 3, at: start.addingTimeInterval(30)), capturedAt: start.addingTimeInterval(30))
+    history.record(reading(.antigravity, .fast, used: 2, at: start.addingTimeInterval(170)), capturedAt: start.addingTimeInterval(170))
+    let antigravity = history.observations.filter { $0.window.provider == .antigravity }
+    #expect(antigravity.count == 2)
+    #expect(Set(antigravity.map(\.segment)).count == 1)
+    #expect(history.observations.filter { $0.window.provider == .codex }.count == 1)
+
+    // A real clock step back is still fenced.
+    history.record(reading(.codex, .slow, used: 4, at: start.addingTimeInterval(20)), capturedAt: start.addingTimeInterval(20))
+    history.record(reading(.antigravity, .fast, used: 3, at: start.addingTimeInterval(230)), capturedAt: start.addingTimeInterval(230))
+    #expect(Set(history.observations.filter { $0.window.provider == .antigravity }.map(\.segment)).count == 2)
+  }
+
   @Test("replay records providers in capture order, so a snapshot's name order is not a clock reversal")
   func replayInCaptureOrder() throws {
     // Name order is antigravity, claude, codex; captures run the other way.

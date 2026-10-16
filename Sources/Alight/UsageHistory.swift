@@ -68,6 +68,14 @@ struct UsageHistory: Sendable {
   /// or a cached refresh. Repeated timestamps and clock reversal are rejected.
   mutating func record(_ result: ProviderResult, capturedAt: Date) {
     guard capturedAt.timeIntervalSince1970.isFinite else { return }
+    // A reading already recorded at this exact capture (a cached reading that
+    // later outbox snapshots repeat) is not new evidence of clock movement:
+    // without this, replaying it would fence every window read since.
+    if !result.windows.isEmpty, result.windows.allSatisfy({ window in
+      observations.last { $0.window.id == window.id }?.capturedAt == capturedAt
+    }) {
+      return
+    }
     let pruned = prune(now: capturedAt)
     let fencesBefore = clockDiscontinuities
     // A failed/deferred poll also reveals clock movement. Do not let a later
