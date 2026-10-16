@@ -1,26 +1,39 @@
 import AppKit
+import SwiftUI
 
 @MainActor
-final class StatusItemController {
+final class StatusItemController: NSObject, NSPopoverDelegate {
   private let statusItem = NSStatusBar.system.statusItem(withLength: 24)
   private let store = UsageStore()
   private let updater = AppUpdater()
+  private let layoutStore = DashboardLayoutStore()
+  private let popover = NSPopover()
   private lazy var usageInsightsWindow = UsageInsightsWindowController(store: store)
-  /// The dropdown's provider list view; kept so a reorder can animate it
-  /// instead of rebuilding the menu.
-  private var sectionsContainer: ProviderSectionsView?
 
-  init() {
+  override init() {
+    super.init()
     if let button = statusItem.button {
       button.bezelStyle = .regularSquare
       button.isBordered = false
       button.imagePosition = .imageOnly
       button.imageScaling = .scaleProportionallyDown
       button.toolTip = "Alight"
+      button.target = self
+      button.action = #selector(statusItemClicked(_:))
+      button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
-    statusItem.menu = makeMenu()
 
-    // Connect SettingsWindowController
+    popover.behavior = .transient
+    popover.animates = true
+    popover.delegate = self
+    let hosting = NSHostingController(rootView: DashboardRoot(store: store, layoutStore: layoutStore, actions: dashboardActions))
+    // The popover follows the SwiftUI content's ideal size (cards added,
+    // removed, customized).
+    hosting.sizingOptions = [.preferredContentSize]
+    popover.contentViewController = hosting
+
+    layoutStore.onChange = { [weak self] in self?.updateIcon() }
+
     SettingsWindowController.shared.onSettingChanged = { [weak self] in
       self?.applyIconSettingChange()
     }
@@ -36,10 +49,27 @@ final class StatusItemController {
 
     Task {
       await store.refresh()
-      updateMenu()
       updateIcon()
       startRefreshLoop()
     }
+  }
+
+  private var dashboardActions: DashboardActions {
+    DashboardActions(
+      refresh: { [weak self] in self?.refresh() },
+      openSettings: { [weak self] in self?.openSettingsWindow() },
+      openHistory: { [weak self] in self?.openUsageHistory() },
+      checkForUpdates: { [weak self] in
+        self?.popover.performClose(nil)
+        self?.updater.checkForUpdates()
+      },
+      quit: { NSApplication.shared.terminate(nil) },
+      signIn: { [weak self] provider in
+        self?.popover.performClose(nil)
+        CLISignIn.launch(provider)
+      },
+      color: { provider in Color(nsColor: GaugeIconRenderer.providerColor(provider, style: AppSettings.iconStyle)) }
+    )
   }
 
   private func startRefreshLoop() {
@@ -47,85 +77,48 @@ final class StatusItemController {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(60))
         await store.refresh()
-        updateMenu()
         updateIcon()
       }
     }
   }
 
-  private func makeMenu() -> NSMenu {
-    let menu = NSMenu()
-    menu.autoenablesItems = false
-    menu.addItem(Self.usageHistoryMenuItem(target: self))
-    return menu
-  }
+  // MARK: Status item
 
-  private func updateMenu() {
-    let menu = statusItem.menu ?? makeMenu()
-    menu.removeAllItems()
-
-    let providers = AppSettings.providerOrder
-
-    // Every provider section lives inside one container view so a reorder can
-    // animate instead of asking NSMenu to re-lay-out individual items.
-    let sections = ProviderSectionsView(
-      frame: NSRect(x: 0, y: 0, width: ProviderSectionsView.width, height: 0)
-    )
-    sections.setSections(providers.map { provider in
-      makeProviderSection(provider)
-    })
-    sectionsContainer = sections
-
-    let sectionsItem = NSMenuItem()
-    sectionsItem.view = sections
-    menu.addItem(sectionsItem)
-
-    menu.addItem(.separator())
-
-    menu.addItem(Self.usageHistoryMenuItem(target: self))
-    menu.addItem(.separator())
-
-    // Footer row with Refresh button, Status text, and Gear button
-    let statusText: String
-    if store.status.ok {
-      let relative = store.status.generatedAt.formatted(.dateTime.hour().minute())
-      statusText = "Alight · Updated \(relative)"
+  @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+    if NSApp.currentEvent?.type == .rightMouseUp {
+      showContextMenu()
     } else {
-      statusText = "Alight · Usage unavailable"
+      togglePopover()
     }
-
-    let footerItem = NSMenuItem()
-    footerItem.view = MenuFooterRowView(
-      statusText: statusText,
-      onRefresh: { [weak self] in
-        self?.refresh()
-      },
-      onGearClick: { [weak self] in
-        self?.openSettingsWindow()
-      }
-    )
-    menu.addItem(footerItem)
-
-    // Hidden items for standard keyboard shortcuts
-    let settingsShortcut = Self.keyboardShortcut(title: "Settings…", action: #selector(openSettingsWindow), key: ",")
-    menu.addItem(settingsShortcut)
-
-    let refreshShortcut = Self.keyboardShortcut(title: "Refresh", action: #selector(refresh), key: "r")
-    menu.addItem(refreshShortcut)
-
-    let quitShortcut = Self.keyboardShortcut(title: "Quit Alight", action: #selector(quit), key: "q")
-    menu.addItem(quitShortcut)
-
-    setTargets(in: menu)
-
-    statusItem.menu = menu
   }
 
-  static func keyboardShortcut(title: String, action: Selector, key: String) -> NSMenuItem {
-    let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-    item.isHidden = true
-    item.allowsKeyEquivalentWhenHidden = true
-    return item
+  private func togglePopover() {
+    guard let button = statusItem.button else { return }
+    if popover.isShown {
+      popover.performClose(nil)
+    } else {
+      NSApp.activate(ignoringOtherApps: true)
+      popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+      popover.contentViewController?.view.window?.makeKey()
+      button.highlight(true)
+    }
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    statusItem.button?.highlight(false)
+  }
+
+  /// Right-click: the essentials without opening the dashboard.
+  private func showContextMenu() {
+    let menu = NSMenu()
+    menu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r").target = self
+    menu.addItem(Self.usageHistoryMenuItem(target: self))
+    menu.addItem(withTitle: "Settings…", action: #selector(openSettingsWindow), keyEquivalent: ",").target = self
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Quit Alight", action: #selector(quit), keyEquivalent: "q").target = self
+    statusItem.menu = menu
+    statusItem.button?.performClick(nil)
+    statusItem.menu = nil
   }
 
   static func usageHistoryMenuItem(target: AnyObject) -> NSMenuItem {
@@ -134,115 +127,47 @@ final class StatusItemController {
     return item
   }
 
-  private func makeProviderSection(_ provider: Provider) -> ProviderSectionView {
-    let style = AppSettings.iconStyle
-    let fillMode = AppSettings.meterFillMode
-    let result = store.status.result(for: provider)
-    let color = GaugeIconRenderer.providerColor(provider, style: style)
-
-    return ProviderSectionView(
-      provider: provider,
-      color: color,
-      result: result,
-      fillMode: fillMode,
-      onColorChanged: { [weak self] _ in
-        self?.applyIconSettingChange()
-      },
-      onMoveUp: { [weak self] in
-        AppSettings.moveProvider(provider, up: true)
-        self?.providerOrderChanged(moving: provider)
-      },
-      onMoveDown: { [weak self] in
-        AppSettings.moveProvider(provider, up: false)
-        self?.providerOrderChanged(moving: provider)
-      },
-      onSignIn: { [weak self] in
-        self?.signIn(provider)
-      }
-    )
-  }
-
-  /// Applies a reorder to the open dropdown with a slide animation, then
-  /// refreshes the chevrons and the menu-bar icon (whose cards follow the
-  /// same order).
-  private func providerOrderChanged(moving provider: Provider) {
-    let order = AppSettings.providerOrder
-    sectionsContainer?.applyOrder(order, moving: provider, animated: true)
-    sectionsContainer?.updateMoveLimits()
-    updateIcon()
-  }
-
-  @objc private func openSettingsWindow() {
-    statusItem.menu?.cancelTracking()
-    SettingsWindowController.shared.show()
-  }
-
   private func updateIcon() {
+    // The icon draws only the most relevant windows; the tooltip still
+    // summarizes everything.
+    let shown = MenuBarRelevance.select(status: store.status, layout: layoutStore.layout)
     let mode = AppSettings.displayMode
     let image: NSImage
     switch mode {
     case .gauge:
       statusItem.length = 24
-      image = GaugeIconRenderer.image(status: store.status, style: AppSettings.iconStyle)
+      image = GaugeIconRenderer.image(status: shown, style: AppSettings.iconStyle)
     case .meters:
       let style = AppSettings.meterStyle
       statusItem.length = MeterIconRenderer.size(for: style).width + 6
-      image = MeterIconRenderer.image(status: store.status, style: style)
+      image = MeterIconRenderer.image(status: shown, style: style)
     }
     statusItem.button?.image = image
     statusItem.button?.toolTip = store.status.summary
   }
 
-  private func setTargets(in menu: NSMenu) {
-    for item in menu.items {
-      if item.action != nil {
-        item.target = self
-      }
-      if let submenu = item.submenu {
-        setTargets(in: submenu)
-      }
-    }
-  }
-
   private func applyIconSettingChange() {
-    updateMenu()
+    layoutStore.appearanceRevision += 1
     updateIcon()
   }
 
-  @objc private func selectDisplayMode(_ sender: NSMenuItem) {
-    guard
-      let raw = sender.representedObject as? String,
-      let mode = DisplayMode(rawValue: raw)
-    else { return }
-    AppSettings.displayMode = mode
-    applyIconSettingChange()
-  }
+  // MARK: Actions
 
-  private func signIn(_ provider: Provider) {
-    CLISignIn.launch(provider)
+  @objc private func openSettingsWindow() {
+    popover.performClose(nil)
+    SettingsWindowController.shared.show()
   }
 
   @objc private func refresh() {
     Task {
       await store.refresh(force: true)
-      updateMenu()
       updateIcon()
     }
   }
 
   @objc private func openUsageHistory() {
+    popover.performClose(nil)
     usageInsightsWindow.showInsights()
-  }
-
-  @objc private func checkForUpdatesFromMenu() {
-    updater.checkForUpdates()
-  }
-
-  @objc private func toggleAutomaticUpdates() {
-    let newValue = !updater.automaticallyInstallsUpdates
-    updater.setAutomaticallyInstallsUpdates(newValue)
-    SettingsWindowController.shared.automaticallyInstallsUpdates = newValue
-    updateMenu()
   }
 
   @objc private func quit() {

@@ -24,6 +24,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
+    if let renderDashboardIndex = arguments.firstIndex(of: "--render-dashboard") {
+      let output = renderDashboardIndex + 1 < arguments.count ? arguments[renderDashboardIndex + 1] : "alight-dashboard.png"
+      DashboardRenderHarness.run(outputPath: output)
+      return
+    }
+
     let app = NSApplication.shared
     app.delegate = sharedDelegate
     app.setActivationPolicy(.accessory)

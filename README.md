@@ -8,22 +8,24 @@ Hands are deconflicted on three axes:
 
 - **provider → color:** Codex is teal, Claude is coral, Antigravity is purple.
 - **window → length:** the slow (weekly) window is a long hand; the fast (~5h) window is a short outer-band hand.
-- **scoped limit → marker:** active Claude Fable weekly usage appears as a four-pointed coral star on the outer edge. It follows the latest fresh Anthropic reading, and disappears when a later successful response no longer includes that active scoped limit. Any other active scoped weekly limit (such as 3P model quotas in Antigravity) surfaces as a dropdown-only row and stays off the dial; the star remains reserved for Fable.
+- **scoped limit → marker:** active Claude Fable weekly usage appears as a four-pointed coral star on the outer edge. It follows the latest fresh Anthropic reading, and disappears when a later successful response no longer includes that active scoped limit. Any other active scoped weekly limit (such as 3P model quotas in Antigravity) surfaces only in the dashboard and stays off the dial; the star remains reserved for Fable.
 - **pressure → depth:** the most-constrained (highest-pressure) window draws on top, so the hand that matters most is in the foreground.
 
 So a long teal hand is Codex's weekly window when that is the Codex limit the API reports; a short coral hand is Claude's 5-hour window; a long purple hand is Antigravity's weekly Gemini quota; a short purple hand is Antigravity's 5-hour Gemini quota; a coral star is Claude's active Fable scoped weekly limit.
 
-The open clock hands in the unused bottom arc show reset phase for every active broad limit without adding another dial face. They rotate clockwise through their complete window and return to 12 at reset. Seven ticks on the inner weekly track make each interval one day; five ticks on the outer 5h track make each interval one hour. A hand stops just inside its matching track, provider remains encoded by color, and a track appears only when that kind of limit exists. The complete time display sits behind the quota display, so quota hands and scoped markers remain visually dominant where they cross. Scoped limits remain off the reset clock to keep it legible. The dropdown gives the exact local reset time and countdown for every displayed limit.
+The open clock hands in the unused bottom arc show reset phase for every active broad limit without adding another dial face. They rotate clockwise through their complete window and return to 12 at reset. Seven ticks on the inner weekly track make each interval one day; five ticks on the outer 5h track make each interval one hour. A hand stops just inside its matching track, provider remains encoded by color, and a track appears only when that kind of limit exists. The complete time display sits behind the quota display, so quota hands and scoped markers remain visually dominant where they cross. Scoped limits remain off the reset clock to keep it legible. The dashboard gives the countdown for every displayed limit; hover it for the local reset time.
 
 The hands are pace-relative consumption meters. A hand pegged left means `0%` consumed, centered means exactly on the expected reset pace, and pegged right means `100%` consumed / `0%` remaining.
 
-When a provider isn't signed in (or its token has expired), the dropdown shows a **Sign in to …** item that launches that CLI's login flow in Terminal (`codex login` / `claude auth login` / `agy`); after signing in, hit Refresh.
+Clicking the menu-bar item opens the dashboard popover (right-click for Refresh, Usage History, Settings and Quit). It is a list of cards, each a view onto one provider's limits; add any number from **+** (several per provider is fine), drag them into any order, and choose **Customize…** from a card's **⋯** menu to pick what it shows and in which order:
 
-The menu groups windows by provider and uses a simple pressure color per window:
+- **Limits:** one row per quota window with remaining (or used) percentage, a bar with an on-pace tick, pace status (to spare, on pace, or over pace, each with its own glyph) and the reset countdown. Individual windows can be hidden.
+- **History:** a smooth line per window over the last 6h, 24h or 3d of live readings, a soft area under the card's first limit, its dashed on-pace guide, and a hover readout. A reset, account change or long gap starts a new line rather than joining unrelated readings.
+- **Runway:** when each window is projected to run out, or what will be left at reset.
 
-- blue: high / too cold / plenty of slack
-- green: good / on pace
-- red: low / too hot / usage is ahead of pace
+A provider that isn't signed in (or whose token expired) shows **Sign In**, which launches that CLI's login flow in Terminal (`codex login` / `claude auth login` / `agy`); after signing in, hit Refresh.
+
+The menu-bar icon draws only the most relevant windows across your cards (**⋯ → Menu Bar Shows**, 1–6, default 4). Relevance favors windows running over pace and windows with little allowance left; the selection itself is Vane's ranked, capped fit (see *Bundled upstream JavaScript*).
 
 The **Display Mode** menu lets you switch between:
 - **Gauge**: The circular dial with pace-relative hands, redline danger arc, and reset clock hands.
@@ -41,7 +43,7 @@ The native app:
 
 - reads local Codex auth from `~/.codex/auth.json` and calls the ChatGPT usage endpoint Codex uses;
 - runs Claude Code's own headless `/usage` command (`claude -p /usage --output-format json`), mapping its current session onto the fast hand, its all-models week (when the plan has one) onto the slow hand, and its Fable week onto the outer-edge star;
-- reads local Antigravity credentials and queries the native Antigravity backend (`daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`), mapping the Gemini 5-hour and weekly limits to fast/slow purple hands and secondary model groups to dropdown menu rows.
+- reads local Antigravity credentials and queries the native Antigravity backend (`daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`), mapping the Gemini 5-hour and weekly limits to fast/slow purple hands and secondary model groups to dashboard-only rows.
 
 It never prints or stores credentials. Each provider is polled independently, so one being unavailable never blocks the others. Alight persists only derived last-known usage (percentages, reset times, and capture time) under Application Support. A credential or endpoint failure keeps still-valid hands visible with their age and the current recovery warning; each cached hand retires at its own reset boundary, and no cached reading older than six hours is shown. Cached pressure is recalculated against the current clock instead of freezing at capture time.
 
@@ -58,7 +60,7 @@ history. Codex account partitions use a domain-separated SHA-256 reference from
 the same auth snapshot that supplied the request.
 
 `UsageInsightsView(store:)` and `UsageInsightsWindowController(store:)` are a
-reusable chart and thin window host. Open **Usage History…** from the Alight menu.
+reusable chart and thin window host. Open **Usage History…** from the dashboard's **⋯** menu or the right-click menu.
 The menu retains one window controller using the gauge's existing store, including
 after closing and reopening the window. Opening it creates no polling or provider
 runtime. Source tests cover menu dispatch and window reuse with synthetic data;
@@ -116,7 +118,7 @@ claude -p /usage --output-format json --no-session-persistence --safe-mode
 - **Cost:** measured on Claude Code 2.1.286, `/usage` takes 2-4 s and about 1.8 CPU-seconds (it also summarizes local sessions), `auth status` about 0.2 s; at the three-minute cadence, roughly 15 CPU-minutes a day.
 - **CLI location:** `ALIGHT_CLAUDE_CLI`, else the first of `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, `~/.claude/local/claude`, `~/.volta/bin/claude`, `~/.bun/bin/claude`, and the newest `~/.nvm/versions/node/*/bin/claude`.
 - **Isolation:** stdin is `/dev/null`, the working directory is `~/Library/Application Support/Alight`, the environment is only `HOME`, `USER`, `PATH`, `TMPDIR`, `LANG=en_US.UTF-8` and `DISABLE_AUTOUPDATER=1`, signals start unblocked, output is bounded, and a 30-second deadline sends SIGTERM, then SIGKILL, to the CLI's whole process group. Alight writes nothing under `~/.claude`; Claude Code may update its own state (`~/.claude.json`, its token).
-- **Plans:** a Team seat reports only a session limit plus model-scoped weeks (such as Fable); that is a complete reading. Pro/Max plans also report `Current week (all models)`, and Max/Team plans `Current week (Sonnet only)`, shown as a dropdown row that counts toward the summary's most constrained window.
+- **Plans:** a Team seat reports only a session limit plus model-scoped weeks (such as Fable); that is a complete reading. Pro/Max plans also report `Current week (all models)`, and Max/Team plans `Current week (Sonnet only)`, shown as a dashboard row that counts toward the summary's most constrained window.
 - **Polling:** at most every three minutes, backing off to fifteen after failures; a signed-out CLI is rechecked every minute, so usage appears within a minute of signing in. Manual Refresh polls immediately. Only one `claude` process runs at a time.
 - **Failures** are shown as such (for example `Claude Code /usage timed out` or `unrecognized Claude Code usage line: …`) and never as guessed numbers; between polls the menu keeps the reason and the time of the next attempt. When Claude Code is signed out, the menu offers **Sign in to Claude…** (`claude auth login`).
 - **Cache:** a Claude reading is reused only for the same account (a domain-separated SHA-256 of its email and organization plus the plan name; the raw email is never stored). A different, unknown, or signed-out account drops it, and no cached reading older than six hours is shown.
