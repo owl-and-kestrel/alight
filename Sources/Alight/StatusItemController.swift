@@ -6,6 +6,9 @@ final class StatusItemController {
   private let store = UsageStore()
   private let updater = AppUpdater()
   private lazy var usageInsightsWindow = UsageInsightsWindowController(store: store)
+  /// The dropdown's provider list view; kept so a reorder can animate it
+  /// instead of rebuilding the menu.
+  private var sectionsContainer: ProviderSectionsView?
 
   init() {
     if let button = statusItem.button {
@@ -62,17 +65,20 @@ final class StatusItemController {
     menu.removeAllItems()
 
     let providers = AppSettings.providerOrder
-    for (index, provider) in providers.enumerated() {
-      if index > 0 {
-        menu.addItem(.separator())
-      }
-      addProviderSection(
-        provider,
-        index: index,
-        totalCount: providers.count,
-        to: menu
-      )
-    }
+
+    // Every provider section lives inside one container view so a reorder can
+    // animate instead of asking NSMenu to re-lay-out individual items.
+    let sections = ProviderSectionsView(
+      frame: NSRect(x: 0, y: 0, width: ProviderSectionsView.width, height: 0)
+    )
+    sections.setSections(providers.map { provider in
+      makeProviderSection(provider)
+    })
+    sectionsContainer = sections
+
+    let sectionsItem = NSMenuItem()
+    sectionsItem.view = sections
+    menu.addItem(sectionsItem)
 
     menu.addItem(.separator())
 
@@ -128,70 +134,42 @@ final class StatusItemController {
     return item
   }
 
-  private func addProviderSection(
-    _ provider: Provider,
-    index: Int,
-    totalCount: Int,
-    to menu: NSMenu
-  ) {
+  private func makeProviderSection(_ provider: Provider) -> ProviderSectionView {
     let style = AppSettings.iconStyle
     let fillMode = AppSettings.meterFillMode
     let result = store.status.result(for: provider)
     let color = GaugeIconRenderer.providerColor(provider, style: style)
 
-    let headerItem = NSMenuItem()
-    headerItem.view = ProviderHeaderRowView(
+    return ProviderSectionView(
       provider: provider,
       color: color,
       result: result,
-      canMoveUp: index > 0,
-      canMoveDown: index < totalCount - 1,
+      fillMode: fillMode,
       onColorChanged: { [weak self] _ in
         self?.applyIconSettingChange()
       },
       onMoveUp: { [weak self] in
         AppSettings.moveProvider(provider, up: true)
-        self?.applyIconSettingChange()
+        self?.providerOrderChanged(moving: provider)
       },
       onMoveDown: { [weak self] in
         AppSettings.moveProvider(provider, up: false)
-        self?.applyIconSettingChange()
+        self?.providerOrderChanged(moving: provider)
+      },
+      onSignIn: { [weak self] in
+        self?.signIn(provider)
       }
     )
-    menu.addItem(headerItem)
+  }
 
-    if let result, result.ok, !result.windows.isEmpty {
-      let now = Date()
-      for window in result.windows {
-        let windowItem = NSMenuItem()
-        windowItem.view = UsageWindowRowView(
-          window: window,
-          accentColor: color,
-          fillMode: fillMode,
-          now: now
-        )
-        menu.addItem(windowItem)
-      }
-    } else {
-      let reason = result?.error ?? "Usage unavailable"
-      let statusItem = NSMenuItem()
-      statusItem.view = ProviderStatusRowView(reason: reason)
-      menu.addItem(statusItem)
-    }
-
-    if result?.needsAuth == true {
-      let signIn = NSMenuItem(
-        title: "Sign in to \(provider.displayName)…",
-        action: #selector(signIn(_:)),
-        keyEquivalent: ""
-      )
-      signIn.image = NSImage(
-        systemSymbolName: "person.crop.circle.badge.plus",
-        accessibilityDescription: "Sign In"
-      )
-      signIn.representedObject = provider
-      menu.addItem(signIn)
-    }
+  /// Applies a reorder to the open dropdown with a slide animation, then
+  /// refreshes the chevrons and the menu-bar icon (whose cards follow the
+  /// same order).
+  private func providerOrderChanged(moving provider: Provider) {
+    let order = AppSettings.providerOrder
+    sectionsContainer?.applyOrder(order, moving: provider, animated: true)
+    sectionsContainer?.updateMoveLimits()
+    updateIcon()
   }
 
   @objc private func openSettingsWindow() {
@@ -240,8 +218,7 @@ final class StatusItemController {
     applyIconSettingChange()
   }
 
-  @objc private func signIn(_ sender: NSMenuItem) {
-    guard let provider = sender.representedObject as? Provider else { return }
+  private func signIn(_ provider: Provider) {
     CLISignIn.launch(provider)
   }
 

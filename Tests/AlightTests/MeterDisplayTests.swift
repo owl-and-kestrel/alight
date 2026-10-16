@@ -211,47 +211,18 @@ struct MeterDisplayTests {
     #expect(MeterIconRenderer.elapsedFraction(for: expired, now: now) == 1.0)
   }
 
-  @Test("indicator position adapts to fill mode and direction")
+  @Test("pace dot always runs left to right regardless of fill mode and direction")
   func indicatorPositionMath() {
     let barX: CGFloat = 2.0
     let barWidth: CGFloat = 30.0
-    let elapsed: CGFloat = 0.25
 
-    let fillLTR = MeterIconRenderer.indicatorPosition(
-      elapsed: elapsed,
-      barX: barX,
-      barWidth: barWidth,
-      fillMode: .fill,
-      direction: .leftToRight
-    )
-    #expect(fillLTR == 9.5)
-
-    let fillRTL = MeterIconRenderer.indicatorPosition(
-      elapsed: elapsed,
-      barX: barX,
-      barWidth: barWidth,
-      fillMode: .fill,
-      direction: .rightToLeft
-    )
-    #expect(fillRTL == 24.5)
-
-    let emptyLTR = MeterIconRenderer.indicatorPosition(
-      elapsed: elapsed,
-      barX: barX,
-      barWidth: barWidth,
-      fillMode: .empty,
-      direction: .leftToRight
-    )
-    #expect(emptyLTR == 24.5)
-
-    let emptyRTL = MeterIconRenderer.indicatorPosition(
-      elapsed: elapsed,
-      barX: barX,
-      barWidth: barWidth,
-      fillMode: .empty,
-      direction: .rightToLeft
-    )
-    #expect(emptyRTL == 9.5)
+    // Direction and fill style only move the white bar; the dot tracks time
+    // from the track's left edge in every combination.
+    #expect(MeterIconRenderer.indicatorPosition(elapsed: 0.25, barX: barX, barWidth: barWidth) == 9.5)
+    #expect(MeterIconRenderer.indicatorPosition(elapsed: 0, barX: barX, barWidth: barWidth) == 2.0)
+    #expect(MeterIconRenderer.indicatorPosition(elapsed: 1, barX: barX, barWidth: barWidth) == 32.0)
+    #expect(MeterIconRenderer.indicatorPosition(elapsed: 1.4, barX: barX, barWidth: barWidth) == 32.0)
+    #expect(MeterIconRenderer.indicatorPosition(elapsed: -0.4, barX: barX, barWidth: barWidth) == 2.0)
   }
 
   @Test("row metrics keep three providers inside the menu bar height")
@@ -357,6 +328,51 @@ struct MeterDisplayTests {
     #expect(AppSettings.meterDirection == .leftToRight)
     #expect(AppSettings.meterLabelMode == .swatch)
     #expect(AppSettings.meterWidth == 36.0)
+  }
+
+  @Test("hidden providers drop out of the meter cards")
+  func meterVisibilityFiltering() {
+    let now = Date()
+    let codex = makeWindow(provider: .codex, speed: .slow, usedPercent: 20, duration: 7 * 24 * 3600, now: now)
+    let claude = makeWindow(provider: .claude, speed: .fast, usedPercent: 40, duration: 5 * 3600, now: now)
+    let status = UsageStatus(generatedAt: now, results: [
+      ProviderResult(provider: .codex, ok: true, source: "test", error: nil, windows: [codex]),
+      ProviderResult(provider: .claude, ok: true, source: "test", error: nil, windows: [claude])
+    ])
+
+    #expect(MeterIconRenderer.meterGroups(status: status, hidden: []).count == 2)
+
+    let hidingClaude = MeterIconRenderer.meterGroups(status: status, hidden: [.claude])
+    #expect(hidingClaude.count == 1)
+    #expect(hidingClaude[0].provider == .codex)
+
+    let hidingBoth = MeterIconRenderer.meterGroups(status: status, hidden: [.claude, .codex])
+    #expect(hidingBoth.isEmpty)
+
+    // Hiding is independent of the display order.
+    #expect(MeterIconRenderer.meterGroups(status: status, hidden: [.codex]).count == 1)
+  }
+
+  @Test("meter visibility setting round-trips and resets with the other icon settings")
+  func meterVisibilityPersistence() {
+    let saved = AppSettings.hiddenMeterProviders
+    defer { AppSettings.hiddenMeterProviders = saved }
+
+    AppSettings.hiddenMeterProviders = []
+    #expect(AppSettings.meterVisible(.antigravity))
+
+    AppSettings.setMeterVisible(false, for: .antigravity)
+    #expect(!AppSettings.meterVisible(.antigravity))
+    #expect(AppSettings.hiddenMeterProviders == [.antigravity])
+    #expect(AppSettings.meterVisible(.codex))
+    #expect(AppSettings.meterVisible(.claude))
+
+    AppSettings.setMeterVisible(true, for: .antigravity)
+    #expect(AppSettings.hiddenMeterProviders.isEmpty)
+
+    AppSettings.setMeterVisible(false, for: .claude)
+    AppSettings.resetIconStyle()
+    #expect(AppSettings.meterVisible(.claude))
   }
 
   private func makeWindow(

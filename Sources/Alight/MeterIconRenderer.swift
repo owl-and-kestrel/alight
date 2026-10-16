@@ -11,11 +11,11 @@ import AppKit
 /// weekly track, and the ~5h track sits at the bottom. Every card is the same height
 /// regardless of how many tracks it holds; a lone track fills its card.
 ///
-/// A dot on each track marks how far through the window the clock is. Where
-/// the dot lies on the white bar it is drawn in the provider colour; where it
-/// lies on the track it is drawn white; straddling the bar's edge it is
-/// two-toned. So a dot sitting on the bar means the clock is behind usage
-/// (running hot) and a dot out on the track means usage is behind the clock.
+/// A dot on each track marks how far through the window the clock is; it
+/// always advances left to right with elapsed time, whatever direction or fill
+/// style the bar uses. The dot picks up the provider colour where it overlaps
+/// the white bar and white where it sits on the bare track, so the two-tone
+/// edge still shows where the clock crosses the bar.
 ///
 /// The card is a fixed dark grey so the meters read on any menu-bar tint.
 @MainActor
@@ -121,14 +121,19 @@ enum MeterIconRenderer {
   }
 
   /// Groups active usage windows by provider in canonical order ([.codex, .claude, .antigravity]).
+  /// Providers in `hidden` are skipped, so their meter card never draws.
   /// Within each group, slow (weekly) windows appear on top before fast (~5h) windows. Dropdown-only
   /// menu rows are excluded.
-  static func meterGroups(status: UsageStatus) -> [(provider: Provider, windows: [UsageWindow])] {
+  static func meterGroups(
+    status: UsageStatus,
+    hidden: Set<Provider> = AppSettings.hiddenMeterProviders
+  ) -> [(provider: Provider, windows: [UsageWindow])] {
     let candidates = status.windows.filter { $0.visualStyle != .menuRow }
     let providerOrder: [Provider] = AppSettings.providerOrder
 
     var groups: [(provider: Provider, windows: [UsageWindow])] = []
     for provider in providerOrder {
+      guard !hidden.contains(provider) else { continue }
       let providerWindows = candidates.filter { $0.provider == provider }
       guard !providerWindows.isEmpty else { continue }
       let sorted = providerWindows.sorted { a, b in
@@ -250,31 +255,18 @@ enum MeterIconRenderer {
     }
   }
 
-  /// Calculates the horizontal position for the period elapsed indicator tick.
+  /// Horizontal position of the pace (time) dot.
+  ///
+  /// Time always advances left to right: the dot sits at the elapsed fraction
+  /// measured from the track's left edge no matter which direction the usage
+  /// bar is anchored from or whether the bar shows used or remaining quota.
   static func indicatorPosition(
     elapsed: CGFloat,
     barX: CGFloat,
-    barWidth: CGFloat,
-    fillMode: MeterFillMode,
-    direction: MeterDirection
+    barWidth: CGFloat
   ) -> CGFloat {
     let clampedElapsed = min(1.0, max(0.0, elapsed))
-    switch fillMode {
-    case .fill:
-      switch direction {
-      case .leftToRight:
-        return barX + barWidth * clampedElapsed
-      case .rightToLeft:
-        return barX + barWidth * (1.0 - clampedElapsed)
-      }
-    case .empty:
-      switch direction {
-      case .leftToRight:
-        return barX + barWidth * (1.0 - clampedElapsed)
-      case .rightToLeft:
-        return barX + barWidth * clampedElapsed
-      }
-    }
+    return barX + barWidth * clampedElapsed
   }
 
   /// Computes the fill rectangle given the level fraction, track dimensions, and direction.
@@ -453,9 +445,7 @@ enum MeterIconRenderer {
           let dotX = indicatorPosition(
             elapsed: elapsed,
             barX: trackRect.minX,
-            barWidth: trackRect.width,
-            fillMode: style.fillMode,
-            direction: style.direction
+            barWidth: trackRect.width
           )
           let dotRadius = dotDiameter / 2
           let clampedX = max(trackRect.minX + dotRadius + 0.25, min(trackRect.maxX - dotRadius - 0.25, dotX))

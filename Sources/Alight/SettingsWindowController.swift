@@ -136,63 +136,116 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
   // MARK: - Tab Views
 
+  /// Content width of the settings tabs.
+  private static let contentWidth: CGFloat = 440
+  /// Inset from the content edge for titles, subtitles, and separators.
+  private static let contentPad: CGFloat = 30
+
+  /// A centred, single-line label that advances the vertical cursor.
+  private func addCenteredLabel(
+    to container: NSView,
+    cursor: inout CGFloat,
+    text: String,
+    font: NSFont,
+    height: CGFloat,
+    gap: CGFloat,
+    color: NSColor = .labelColor,
+    wrapping: Bool = false
+  ) {
+    let label = wrapping
+      ? NSTextField(wrappingLabelWithString: text)
+      : NSTextField(labelWithString: text)
+    label.font = font
+    label.textColor = color
+    label.alignment = .center
+    label.frame = NSRect(
+      x: Self.contentPad,
+      y: cursor - height,
+      width: Self.contentWidth - 2 * Self.contentPad,
+      height: height
+    )
+    container.addSubview(label)
+    cursor -= height + gap
+  }
+
+  /// Places a control centred horizontally in the tab and advances the cursor.
+  private func addCentered(
+    _ control: NSView,
+    in container: NSView,
+    cursor: inout CGFloat,
+    width: CGFloat,
+    height: CGFloat,
+    gap: CGFloat
+  ) {
+    control.frame = NSRect(
+      x: (Self.contentWidth - width) / 2,
+      y: cursor - height,
+      width: width,
+      height: height
+    )
+    container.addSubview(control)
+    cursor -= height + gap
+  }
+
+  private func addSeparator(in container: NSView, cursor: inout CGFloat, gap: CGFloat = 16) {
+    let sep = NSBox(frame: NSRect(
+      x: Self.contentPad,
+      y: cursor - 1,
+      width: Self.contentWidth - 2 * Self.contentPad,
+      height: 1
+    ))
+    sep.boxType = .separator
+    container.addSubview(sep)
+    cursor -= 1 + gap
+  }
+
   private func makeGeneralView() -> NSView {
-    let container = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 440))
+    let container = NSView(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 440))
+    var cursor: CGFloat = 396
 
-    // Display Mode Header
-    let modeTitle = NSTextField(labelWithString: "Menu Bar Display Mode")
-    modeTitle.font = .systemFont(ofSize: 13, weight: .bold)
-    modeTitle.frame = NSRect(x: 30, y: 395, width: 380, height: 18)
-    container.addSubview(modeTitle)
-
-    let modeSubtitle = NSTextField(wrappingLabelWithString: "Choose whether Alight displays the circular pace gauge or horizontal provider meter cards in the macOS menu bar.")
-    modeSubtitle.font = .systemFont(ofSize: 11, weight: .regular)
-    modeSubtitle.textColor = .secondaryLabelColor
-    modeSubtitle.frame = NSRect(x: 30, y: 355, width: 380, height: 32)
-    container.addSubview(modeSubtitle)
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Menu Bar Display Mode",
+      font: .systemFont(ofSize: 13, weight: .bold),
+      height: 18, gap: 6
+    )
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Choose whether Alight displays the circular pace gauge or horizontal provider meter cards in the macOS menu bar.",
+      font: .systemFont(ofSize: 11, weight: .regular),
+      height: 32, gap: 8, color: .secondaryLabelColor, wrapping: true
+    )
 
     let modeSeg = NSSegmentedControl(labels: ["Gauge Dial", "Provider Meters"], trackingMode: .selectOne, target: self, action: #selector(displayModeChanged(_:)))
     modeSeg.selectedSegment = AppSettings.displayMode == .gauge ? 0 : 1
-    modeSeg.frame = NSRect(x: 30, y: 325, width: 380, height: 24)
-    container.addSubview(modeSeg)
+    addCentered(modeSeg, in: container, cursor: &cursor, width: 380, height: 24, gap: 16)
 
-    // Divider
-    let sep1 = NSBox(frame: NSRect(x: 30, y: 305, width: 380, height: 1))
-    sep1.boxType = .separator
-    container.addSubview(sep1)
+    addSeparator(in: container, cursor: &cursor)
 
-    // Provider Colors Header
-    let colorsTitle = NSTextField(labelWithString: "Provider Colors")
-    colorsTitle.font = .systemFont(ofSize: 13, weight: .bold)
-    colorsTitle.frame = NSRect(x: 30, y: 275, width: 380, height: 18)
-    container.addSubview(colorsTitle)
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Provider Colors",
+      font: .systemFont(ofSize: 13, weight: .bold),
+      height: 18, gap: 6
+    )
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Select accent colors used on the menu bar icon and info cards.",
+      font: .systemFont(ofSize: 11, weight: .regular),
+      height: 16, gap: 10, color: .secondaryLabelColor
+    )
 
-    let colorsSubtitle = NSTextField(labelWithString: "Select accent colors used on the menu bar icon and info cards.")
-    colorsSubtitle.font = .systemFont(ofSize: 11, weight: .regular)
-    colorsSubtitle.textColor = .secondaryLabelColor
-    colorsSubtitle.frame = NSRect(x: 30, y: 255, width: 380, height: 16)
-    container.addSubview(colorsSubtitle)
-
-    var yPos: CGFloat = 220
     for provider in Provider.allCases {
-      let label = NSTextField(labelWithString: "\(provider.displayName):")
-      label.font = .systemFont(ofSize: 12, weight: .medium)
-      label.frame = NSRect(x: 30, y: yPos, width: 100, height: 18)
-      container.addSubview(label)
-
-      let popUp = makeColorPopUp(for: provider, frame: NSRect(x: 135, y: yPos - 2, width: 150, height: 24))
-      container.addSubview(popUp)
-
-      yPos -= 32
+      addColorRow(
+        label: "\(provider.displayName):",
+        popup: makeColorPopUp(for: provider, frame: .zero),
+        in: container,
+        cursor: &cursor,
+        gap: 8
+      )
     }
 
-    // Redline Color
-    let redlineLabel = NSTextField(labelWithString: "Redline Arc:")
-    redlineLabel.font = .systemFont(ofSize: 12, weight: .medium)
-    redlineLabel.frame = NSRect(x: 30, y: yPos, width: 100, height: 18)
-    container.addSubview(redlineLabel)
-
-    let redlinePopUp = NSPopUpButton(frame: NSRect(x: 135, y: yPos - 2, width: 150, height: 24), pullsDown: false)
+    let redlinePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     for choice in GaugeColorChoice.allCases {
       let item = NSMenuItem(title: choice.menuTitle, action: #selector(redlineColorChanged(_:)), keyEquivalent: "")
       item.image = ColorSwatchButton.swatchImage(color: choice.nsColor)
@@ -201,27 +254,55 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
       redlinePopUp.menu?.addItem(item)
     }
     redlinePopUp.selectItem(withTitle: AppSettings.redlineColor.menuTitle)
-    container.addSubview(redlinePopUp)
+    addColorRow(label: "Redline Arc:", popup: redlinePopUp, in: container, cursor: &cursor, gap: 16)
 
-    // Divider
-    yPos -= 25
-    let sep2 = NSBox(frame: NSRect(x: 30, y: yPos, width: 380, height: 1))
-    sep2.boxType = .separator
-    container.addSubview(sep2)
+    addSeparator(in: container, cursor: &cursor)
 
-    // Reset button & Quit button
-    yPos -= 35
+    // Reset & Quit, presented as one centred pair.
+    let buttonWidth: CGFloat = 140
+    let quitWidth: CGFloat = 110
+    let pairWidth = buttonWidth + 10 + quitWidth
+    let pairX = (Self.contentWidth - pairWidth) / 2
+    let buttonY = cursor - 28
+
     let resetBtn = NSButton(title: "Reset Settings", target: self, action: #selector(resetSettingsClicked))
-    resetBtn.frame = NSRect(x: 30, y: yPos, width: 140, height: 28)
     resetBtn.bezelStyle = .rounded
+    resetBtn.frame = NSRect(x: pairX, y: buttonY, width: buttonWidth, height: 28)
     container.addSubview(resetBtn)
 
     let quitBtn = NSButton(title: "Quit Alight", target: self, action: #selector(quitClicked))
-    quitBtn.frame = NSRect(x: 180, y: yPos, width: 110, height: 28)
     quitBtn.bezelStyle = .rounded
+    quitBtn.frame = NSRect(x: pairX + buttonWidth + 10, y: buttonY, width: quitWidth, height: 28)
     container.addSubview(quitBtn)
 
     return container
+  }
+
+  /// A centred label + popup pair, so the color rows sit in the middle of the
+  /// tab instead of hanging off the left edge.
+  private func addColorRow(
+    label labelText: String,
+    popup: NSPopUpButton,
+    in container: NSView,
+    cursor: inout CGFloat,
+    gap: CGFloat
+  ) {
+    let labelWidth: CGFloat = 100
+    let popupWidth: CGFloat = 150
+    let pairWidth = labelWidth + 6 + popupWidth
+    let pairX = (Self.contentWidth - pairWidth) / 2
+    let rowHeight: CGFloat = 24
+
+    let label = NSTextField(labelWithString: labelText)
+    label.font = .systemFont(ofSize: 12, weight: .medium)
+    label.alignment = .right
+    label.frame = NSRect(x: pairX, y: cursor - rowHeight + 3, width: labelWidth, height: 18)
+    container.addSubview(label)
+
+    popup.frame = NSRect(x: pairX + labelWidth + 6, y: cursor - rowHeight, width: popupWidth, height: rowHeight)
+    container.addSubview(popup)
+
+    cursor -= rowHeight + gap
   }
 
   @objc private func quitClicked() {
@@ -281,13 +362,14 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
       let label = NSTextField(labelWithString: text)
       label.font = .systemFont(ofSize: 12, weight: .bold)
       label.textColor = .labelColor
+      label.alignment = .center
       label.frame = NSRect(x: 20, y: y, width: 380, height: 16)
       content.addSubview(label)
       y -= 22
     }
 
     func addSlider(_ setting: IconSliderSetting) {
-      let row = SettingsSliderRow(setting: setting, value: AppSettings.value(for: setting)) { [weak self] val in
+      let row = SettingsSliderRow(setting: setting, value: AppSettings.value(for: setting), width: 380) { [weak self] val in
         AppSettings.setValue(val, for: setting)
         self?.onSettingChanged?()
       }
@@ -324,64 +406,85 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
   }
 
   private func makeMetersView() -> NSView {
-    let container = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 440))
+    let container = NSView(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 440))
+    var cursor: CGFloat = 389
 
-    var y: CGFloat = 390
+    // Which providers draw a meter card in the menu bar.
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Visible Meters",
+      font: .systemFont(ofSize: 12.5, weight: .bold),
+      height: 18, gap: 4
+    )
 
-    // Provider Swatch
-    let swatchTitle = NSTextField(labelWithString: "Provider Swatch")
-    swatchTitle.font = .systemFont(ofSize: 12.5, weight: .bold)
-    swatchTitle.frame = NSRect(x: 30, y: y, width: 380, height: 18)
-    container.addSubview(swatchTitle)
-    y -= 28
+    let boxWidth: CGFloat = 100
+    let boxHeight: CGFloat = 22
+    let boxRow = NSView(frame: .zero)
+    for (index, provider) in Provider.allCases.enumerated() {
+      let box = NSButton(
+        checkboxWithTitle: provider.displayName,
+        target: self,
+        action: #selector(meterVisibilityChanged(_:))
+      )
+      box.state = AppSettings.meterVisible(provider) ? .on : .off
+      box.identifier = NSUserInterfaceItemIdentifier(provider.rawValue)
+      box.frame = NSRect(x: CGFloat(index) * (boxWidth + 5), y: 0, width: boxWidth, height: boxHeight)
+      boxRow.addSubview(box)
+    }
+    addCentered(boxRow, in: container, cursor: &cursor, width: boxWidth * 3 + 10, height: boxHeight, gap: 22)
 
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Provider Swatch",
+      font: .systemFont(ofSize: 12.5, weight: .bold),
+      height: 18, gap: 4
+    )
     let swatchSeg = NSSegmentedControl(labels: ["Color Swatch", "None (Bars Only)"], trackingMode: .selectOne, target: self, action: #selector(meterLabelModeChanged(_:)))
     swatchSeg.selectedSegment = AppSettings.meterLabelMode == .swatch ? 0 : 1
-    swatchSeg.frame = NSRect(x: 30, y: y, width: 380, height: 24)
-    container.addSubview(swatchSeg)
-    y -= 45
+    addCentered(swatchSeg, in: container, cursor: &cursor, width: 380, height: 24, gap: 22)
 
-    // Fill Style
-    let fillTitle = NSTextField(labelWithString: "Meter Fill Style")
-    fillTitle.font = .systemFont(ofSize: 12.5, weight: .bold)
-    fillTitle.frame = NSRect(x: 30, y: y, width: 380, height: 18)
-    container.addSubview(fillTitle)
-    y -= 28
-
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Meter Fill Style",
+      font: .systemFont(ofSize: 12.5, weight: .bold),
+      height: 18, gap: 4
+    )
     let fillSeg = NSSegmentedControl(labels: ["Fill (Used Quota)", "Empty (Remaining Quota)"], trackingMode: .selectOne, target: self, action: #selector(meterFillModeChanged(_:)))
     fillSeg.selectedSegment = AppSettings.meterFillMode == .fill ? 0 : 1
-    fillSeg.frame = NSRect(x: 30, y: y, width: 380, height: 24)
-    container.addSubview(fillSeg)
-    y -= 45
+    addCentered(fillSeg, in: container, cursor: &cursor, width: 380, height: 24, gap: 22)
 
-    // Direction
-    let dirTitle = NSTextField(labelWithString: "Meter Direction")
-    dirTitle.font = .systemFont(ofSize: 12.5, weight: .bold)
-    dirTitle.frame = NSRect(x: 30, y: y, width: 380, height: 18)
-    container.addSubview(dirTitle)
-    y -= 28
-
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Meter Direction",
+      font: .systemFont(ofSize: 12.5, weight: .bold),
+      height: 18, gap: 4
+    )
     let dirSeg = NSSegmentedControl(labels: ["Left to Right", "Right to Left"], trackingMode: .selectOne, target: self, action: #selector(meterDirectionChanged(_:)))
     dirSeg.selectedSegment = AppSettings.meterDirection == .leftToRight ? 0 : 1
-    dirSeg.frame = NSRect(x: 30, y: y, width: 380, height: 24)
-    container.addSubview(dirSeg)
-    y -= 50
+    addCentered(dirSeg, in: container, cursor: &cursor, width: 380, height: 24, gap: 22)
 
-    // Meter Width Slider
-    let widthTitle = NSTextField(labelWithString: "Card Width")
-    widthTitle.font = .systemFont(ofSize: 12.5, weight: .bold)
-    widthTitle.frame = NSRect(x: 30, y: y, width: 380, height: 18)
-    container.addSubview(widthTitle)
-    y -= 48
-
-    let sliderRow = SettingsSliderRow(setting: .meterWidth, value: AppSettings.value(for: .meterWidth)) { [weak self] val in
+    addCenteredLabel(
+      to: container, cursor: &cursor,
+      text: "Card Width",
+      font: .systemFont(ofSize: 12.5, weight: .bold),
+      height: 18, gap: 4
+    )
+    let sliderRow = SettingsSliderRow(setting: .meterWidth, value: AppSettings.value(for: .meterWidth), width: 380) { [weak self] val in
       AppSettings.setValue(val, for: .meterWidth)
       self?.onSettingChanged?()
     }
-    sliderRow.frame = NSRect(x: 30, y: y, width: 380, height: 46)
-    container.addSubview(sliderRow)
+    addCentered(sliderRow, in: container, cursor: &cursor, width: 380, height: 46, gap: 22)
 
     return container
+  }
+
+  @objc private func meterVisibilityChanged(_ sender: NSButton) {
+    guard
+      let rawValue = sender.identifier?.rawValue,
+      let provider = Provider(rawValue: rawValue)
+    else { return }
+    AppSettings.setMeterVisible(sender.state == .on, for: provider)
+    onSettingChanged?()
   }
 
   @objc private func meterLabelModeChanged(_ sender: NSSegmentedControl) {
@@ -430,18 +533,21 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     let autoBox = NSButton(checkboxWithTitle: "Install updates automatically", target: self, action: #selector(toggleAutoUpdates(_:)))
     autoBox.state = automaticallyInstallsUpdates ? .on : .off
-    autoBox.frame = NSRect(x: 50, y: 185, width: 340, height: 22)
+    autoBox.sizeToFit()
+    let autoWidth = autoBox.frame.width
+    autoBox.frame = NSRect(x: (Self.contentWidth - autoWidth) / 2, y: 185, width: autoWidth, height: 22)
     self.autoUpdateCheckbox = autoBox
     container.addSubview(autoBox)
 
     let checkNowBtn = NSButton(title: "Check for Updates Now…", target: self, action: #selector(checkNowClicked))
     checkNowBtn.bezelStyle = .rounded
-    checkNowBtn.frame = NSRect(x: 45, y: 140, width: 220, height: 32)
+    checkNowBtn.frame = NSRect(x: (Self.contentWidth - 220) / 2, y: 140, width: 220, height: 32)
     container.addSubview(checkNowBtn)
 
     let channelLabel = NSTextField(labelWithString: "Release channel: stable (updates.owlandkestrel.com)")
     channelLabel.font = .systemFont(ofSize: 10, weight: .regular)
     channelLabel.textColor = .tertiaryLabelColor
+    channelLabel.alignment = .center
     channelLabel.frame = NSRect(x: 50, y: 100, width: 340, height: 16)
     container.addSubview(channelLabel)
 

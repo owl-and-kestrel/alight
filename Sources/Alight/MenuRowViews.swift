@@ -188,8 +188,10 @@ final class ProviderHeaderRowView: NSView {
   private let providerName: String
   private let statusText: String
   private let statusColor: NSColor
-  private let canMoveUp: Bool
-  private let canMoveDown: Bool
+  private var canMoveUp: Bool
+  private var canMoveDown: Bool
+  private let moveUpButton: MenuIconButton
+  private let moveDownButton: MenuIconButton
   private var dragStartY: CGFloat?
 
   var onColorChanged: ((GaugeColorChoice) -> Void)?
@@ -238,6 +240,25 @@ final class ProviderHeaderRowView: NSView {
 
     self.swatchButton = ColorSwatchButton(provider: provider, color: color)
 
+    // Clickable reorder buttons (▲ / ▼). Both are built up front so a
+    // reorder can reveal/hide them without rebuilding the row.
+    let moveUp = MenuIconButton(
+      frame: NSRect(x: 246, y: 3, width: 16, height: 20),
+      symbolName: "chevron.up",
+      toolTip: "Move \(provider.displayName) up",
+      onClick: onMoveUp
+    )
+    let moveDown = MenuIconButton(
+      frame: NSRect(x: 265, y: 3, width: 16, height: 20),
+      symbolName: "chevron.down",
+      toolTip: "Move \(provider.displayName) down",
+      onClick: onMoveDown
+    )
+    moveUp.isHidden = !canMoveUp
+    moveDown.isHidden = !canMoveDown
+    self.moveUpButton = moveUp
+    self.moveDownButton = moveDown
+
     super.init(frame: NSRect(x: 0, y: 0, width: 286, height: 26))
 
     swatchButton.onColorChanged = { [weak self] choice in
@@ -265,30 +286,20 @@ final class ProviderHeaderRowView: NSView {
     }
     addSubview(statusLabel)
 
-    // Clickable reorder buttons (▲ / ▼)
-    if canMoveUp {
-      let upBtn = MenuIconButton(
-        frame: NSRect(x: 246, y: 3, width: 16, height: 20),
-        symbolName: "chevron.up",
-        toolTip: "Move \(provider.displayName) up",
-        onClick: onMoveUp
-      )
-      addSubview(upBtn)
-    }
-
-    if canMoveDown {
-      let downBtn = MenuIconButton(
-        frame: NSRect(x: 265, y: 3, width: 16, height: 20),
-        symbolName: "chevron.down",
-        toolTip: "Move \(provider.displayName) down",
-        onClick: onMoveDown
-      )
-      addSubview(downBtn)
-    }
+    addSubview(moveUpButton)
+    addSubview(moveDownButton)
   }
 
   required init?(coder: NSCoder) {
     nil
+  }
+
+  /// Shows or hides the chevrons after a reorder changes the row's position.
+  func updateMoveLimits(canMoveUp: Bool, canMoveDown: Bool) {
+    self.canMoveUp = canMoveUp
+    self.canMoveDown = canMoveDown
+    moveUpButton.isHidden = !canMoveUp
+    moveDownButton.isHidden = !canMoveDown
   }
 
   // Click-and-drag in the menu row to reorder
@@ -787,4 +798,335 @@ final class MenuFooterRowView: NSView {
   }
 
   required init?(coder: NSCoder) { nil }
+}
+
+// MARK: - Sign-in Row View
+
+/// One clickable row that starts a provider's CLI login flow. It stands in for
+/// the menu's plain "Sign in to …" item so the whole provider section can live
+/// inside a single reorderable view.
+@MainActor
+final class SignInRowView: NSView {
+  private let titleLabel: NSTextField
+  private var isHovered = false
+
+  var onClick: (() -> Void)?
+
+  override var isFlipped: Bool { true }
+
+  init(title: String, onClick: (() -> Void)? = nil) {
+    self.onClick = onClick
+    self.titleLabel = NSTextField(labelWithString: title)
+    super.init(frame: NSRect(x: 0, y: 0, width: 286, height: 26))
+
+    titleLabel.font = .systemFont(ofSize: 11.5, weight: .semibold)
+    titleLabel.textColor = .labelColor
+    titleLabel.frame = NSRect(x: 30, y: 5, width: 250, height: 16)
+    addSubview(titleLabel)
+    updateTrackingAreas()
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    for area in trackingAreas {
+      removeTrackingArea(area)
+    }
+    addTrackingArea(NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+      owner: self,
+      userInfo: nil
+    ))
+  }
+
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+
+  override func mouseEntered(with event: NSEvent) {
+    isHovered = true
+    setNeedsDisplay(bounds)
+    NSCursor.pointingHand.set()
+  }
+
+  override func mouseExited(with event: NSEvent) {
+    isHovered = false
+    setNeedsDisplay(bounds)
+    NSCursor.arrow.set()
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    onClick?()
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+
+    if isHovered {
+      let pill = bounds.insetBy(dx: 1.0, dy: 1.0)
+      NSColor.quaternaryLabelColor.setFill()
+      NSBezierPath(roundedRect: pill, xRadius: 4.0, yRadius: 4.0).fill()
+    }
+
+    let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+    if let symbol = NSImage(
+      systemSymbolName: "person.crop.circle.badge.plus",
+      accessibilityDescription: "Sign In"
+    )?.withSymbolConfiguration(config) {
+      let symbolRect = NSRect(
+        x: 10,
+        y: (bounds.height - symbol.size.height) / 2,
+        width: symbol.size.width,
+        height: symbol.size.height
+      )
+      symbol.draw(in: symbolRect)
+    }
+  }
+}
+
+// MARK: - Provider Section View
+
+/// Everything the dropdown shows for one provider, stacked as a single view:
+/// the header row (swatch, name, status, reorder chevrons), one row per limit
+/// window (or an unavailable status row), and an optional sign-in row.
+///
+/// Keeping a provider in one view is what lets the list reorder with an
+/// animation instead of asking NSMenu to re-lay-out individual items.
+@MainActor
+final class ProviderSectionView: NSView {
+  override var isFlipped: Bool { true }
+
+  let provider: Provider
+  private(set) var header: ProviderHeaderRowView
+
+  init(
+    provider: Provider,
+    color: NSColor,
+    result: ProviderResult?,
+    fillMode: MeterFillMode,
+    now: Date = Date(),
+    onColorChanged: ((GaugeColorChoice) -> Void)? = nil,
+    onMoveUp: (() -> Void)? = nil,
+    onMoveDown: (() -> Void)? = nil,
+    onSignIn: (() -> Void)? = nil
+  ) {
+    self.provider = provider
+    self.header = ProviderHeaderRowView(
+      provider: provider,
+      color: color,
+      result: result,
+      canMoveUp: false,
+      canMoveDown: false,
+      onColorChanged: onColorChanged,
+      onMoveUp: onMoveUp,
+      onMoveDown: onMoveDown
+    )
+    super.init(frame: NSRect(x: 0, y: 0, width: 286, height: 0))
+
+    var height: CGFloat = 0
+    func append(_ row: NSView) {
+      row.frame = NSRect(x: 0, y: height, width: 286, height: row.frame.height)
+      addSubview(row)
+      height += row.frame.height
+    }
+
+    append(header)
+
+    if let result, result.ok, !result.windows.isEmpty {
+      for window in result.windows {
+        append(UsageWindowRowView(window: window, accentColor: color, fillMode: fillMode, now: now))
+      }
+    } else {
+      append(ProviderStatusRowView(reason: result?.error ?? "Usage unavailable"))
+    }
+
+    if result?.needsAuth == true {
+      append(SignInRowView(title: "Sign in to \(provider.displayName)…", onClick: onSignIn))
+    }
+
+    frame = NSRect(x: 0, y: 0, width: 286, height: height)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  func updateMoveLimits(canMoveUp: Bool, canMoveDown: Bool) {
+    header.updateMoveLimits(canMoveUp: canMoveUp, canMoveDown: canMoveDown)
+  }
+}
+
+// MARK: - Provider Sections Container
+
+/// Stacks every provider section with a hairline separator between them.
+///
+/// Reordering animates: sections slide to their new slots while the sections
+/// being passed over dissolve for the duration of the slide (two rows of text
+/// can't trade places vertically without crossing, and crossing text would
+/// read as a glitch). The total height never changes, so the open menu keeps
+/// its size throughout.
+@MainActor
+final class ProviderSectionsView: NSView {
+  static let width: CGFloat = 286
+  /// Vertical space reserved between two sections, hairline included.
+  static let separatorHeight: CGFloat = 9
+  static let slideDuration: TimeInterval = 0.18
+  static let fadeDuration: TimeInterval = 0.14
+
+  override var isFlipped: Bool { true }
+
+  /// Sections in display order (top to bottom).
+  private(set) var sections: [ProviderSectionView] = []
+  private var separators: [NSBox] = []
+  private var animationGeneration = 0
+
+  var totalHeight: CGFloat { currentSectionFrames.last?.maxY ?? 0 }
+
+  /// Replaces the whole list, laying it out without animation.
+  func setSections(_ newSections: [ProviderSectionView]) {
+    animationGeneration += 1
+    for subview in subviews {
+      subview.removeFromSuperview()
+    }
+
+    sections = newSections
+    for section in newSections {
+      section.alphaValue = 1
+      addSubview(section)
+    }
+
+    separators = newSections.count > 1
+      ? (0..<(newSections.count - 1)).map { _ in
+        let hairline = NSBox(frame: .zero)
+        hairline.boxType = .separator
+        addSubview(hairline)
+        return hairline
+      }
+      : []
+
+    updateMoveLimits()
+    applyLayout()
+  }
+
+  /// Shows or hides the reorder chevrons, which depend on position.
+  func updateMoveLimits() {
+    for (index, section) in sections.enumerated() {
+      section.updateMoveLimits(
+        canMoveUp: index > 0,
+        canMoveDown: index < sections.count - 1
+      )
+    }
+  }
+
+  /// Reorders the sections to match `providers`, animating when asked.
+  /// - Parameters:
+  ///   - providers: the new display order.
+  ///   - movedProvider: the provider the user acted on; it stays solid while
+  ///     the sections it passes dissolve.
+  func applyOrder(_ providers: [Provider], moving movedProvider: Provider? = nil, animated: Bool) {
+    let order = providers.compactMap { provider in sections.first { $0.provider == provider } }
+    guard order.count == sections.count, order.count == providers.count else { return }
+    // Every section appears exactly once (no duplicate providers in the list).
+    guard order.allSatisfy({ section in order.lazy.filter({ $0 === section }).count == 1 }) else { return }
+
+    let previous = sections
+    let previousIndex: [ObjectIdentifier: Int] = Dictionary(
+      uniqueKeysWithValues: previous.enumerated().map { (ObjectIdentifier($0.element), $0.offset) }
+    )
+    sections = order
+
+    let moved = movedProvider.flatMap { provider in
+      order.first { $0.provider == provider }
+    }
+    let fading = order.filter { section in
+      guard section !== moved,
+            let from = previousIndex[ObjectIdentifier(section)],
+            let to = order.firstIndex(of: section),
+            from != to
+      else { return false }
+      return true
+    }
+
+    if animated {
+      animateLayout(fading: fading)
+    } else {
+      applyLayout()
+    }
+  }
+
+  // MARK: Layout
+
+  private var currentSectionFrames: [NSRect] { sectionFrames(in: sections) }
+
+  private func sectionFrames(in order: [ProviderSectionView]) -> [NSRect] {
+    var y: CGFloat = 0
+    return order.map { section in
+      let height = section.frame.height
+      let frame = NSRect(x: 0, y: y, width: Self.width, height: height)
+      y += height + Self.separatorHeight
+      return frame
+    }
+  }
+
+  private func separatorFrames(in order: [ProviderSectionView]) -> [NSRect] {
+    let frames = sectionFrames(in: order)
+    guard frames.count > 1 else { return [] }
+    return (0..<(frames.count - 1)).map { index in
+      NSRect(
+        x: 6,
+        y: frames[index].maxY + (Self.separatorHeight - 1) / 2,
+        width: Self.width - 12,
+        height: 1
+      )
+    }
+  }
+
+  private func applyLayout() {
+    animationGeneration += 1
+    for (section, frame) in zip(sections, currentSectionFrames) { section.frame = frame }
+    for (hairline, frame) in zip(separators, separatorFrames(in: sections)) { hairline.frame = frame }
+    for section in sections { section.alphaValue = 1 }
+    frame = NSRect(x: 0, y: 0, width: Self.width, height: totalHeight)
+  }
+
+  private func animateLayout(fading: [ProviderSectionView]) {
+    animationGeneration += 1
+    let generation = animationGeneration
+
+    let frames = currentSectionFrames
+    let hairlines = separatorFrames(in: sections)
+    for section in sections where !fading.contains(section) {
+      section.alphaValue = 1
+    }
+
+    NSAnimationContext.runAnimationGroup({ context in
+      context.duration = Self.slideDuration
+      context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      for (section, frame) in zip(sections, frames) {
+        section.animator().frame = frame
+      }
+      for (hairline, frame) in zip(separators, hairlines) {
+        hairline.animator().frame = frame
+      }
+      for section in fading {
+        section.animator().alphaValue = 0
+      }
+    }, completionHandler: { [weak self] in
+      // The completion handler arrives without an actor context; AppKit calls
+      // it on the main thread, so re-establish it before touching the views.
+      MainActor.assumeIsolated {
+        guard let self, self.animationGeneration == generation else { return }
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = Self.fadeDuration
+          context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+          for section in fading {
+            section.animator().alphaValue = 1
+          }
+        }
+      }
+    })
+
+
+    frame = NSRect(x: 0, y: 0, width: Self.width, height: totalHeight)
+  }
 }

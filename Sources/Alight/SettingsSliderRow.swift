@@ -2,29 +2,41 @@ import AppKit
 
 @MainActor
 final class SettingsSliderRow: NSView {
+  private let titleLabel: NSTextField
   private let valueLabel: NSTextField
   private let slider: NSSlider
   private let onChange: @MainActor (Double) -> Void
+  private let rowWidth: CGFloat
 
-  init(setting: IconSliderSetting, value: Double, onChange: @escaping @MainActor (Double) -> Void) {
+  init(
+    setting: IconSliderSetting,
+    value: Double,
+    width: CGFloat = 380,
+    onChange: @escaping @MainActor (Double) -> Void
+  ) {
     self.onChange = onChange
+    self.rowWidth = width
     valueLabel = NSTextField(labelWithString: SettingsSliderRow.format(value))
     slider = NSSlider(value: value, minValue: setting.range.lowerBound, maxValue: setting.range.upperBound, target: nil, action: nil)
-    super.init(frame: NSRect(x: 0, y: 0, width: 286, height: 46))
+    titleLabel = NSTextField(labelWithString: setting.menuTitle)
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 46))
 
-    let titleLabel = NSTextField(labelWithString: setting.menuTitle)
     titleLabel.font = .systemFont(ofSize: 12)
     titleLabel.textColor = .labelColor
-    titleLabel.frame = NSRect(x: 14, y: 25, width: 188, height: 16)
     addSubview(titleLabel)
 
     valueLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     valueLabel.alignment = .right
     valueLabel.textColor = .secondaryLabelColor
-    valueLabel.frame = NSRect(x: 206, y: 25, width: 66, height: 16)
     addSubview(valueLabel)
 
-    slider.frame = NSRect(x: 12, y: 5, width: 262, height: 18)
+    // The label and value bookend the full row so the pair reads centred in
+    // the tab instead of hugging its left edge.
+    let valueWidth: CGFloat = 72
+    titleLabel.frame = NSRect(x: 14, y: 25, width: width - 14 - valueWidth - 14, height: 16)
+    valueLabel.frame = NSRect(x: width - valueWidth - 14, y: 25, width: valueWidth, height: 16)
+
+    slider.frame = NSRect(x: 12, y: 5, width: width - 24, height: 18)
     slider.isContinuous = true
     slider.target = self
     slider.action = #selector(sliderChanged(_:))

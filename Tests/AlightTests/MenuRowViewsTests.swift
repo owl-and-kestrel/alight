@@ -460,6 +460,202 @@ struct MenuRowViewsTests {
     let fast3p = windows.first { $0.scope?.key == "3p-5h" }
     #expect(fast3p?.label == "3P Models (5h)")
   }
+
+  @Test("ProviderSectionView stacks header, window rows, status rows, and sign-in")
+  @MainActor
+  func providerSectionView() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let weekly = PressureMath.window(
+      provider: .codex,
+      speed: .slow,
+      usedPercent: 30,
+      resetAt: now.addingTimeInterval(3600 * 24 * 2),
+      limitWindowSeconds: 3600 * 24 * 7,
+      now: now
+    )
+
+    let withWindows = ProviderSectionView(
+      provider: .codex,
+      color: .systemTeal,
+      result: ProviderResult(
+        provider: .codex,
+        ok: true,
+        source: "live",
+        error: nil,
+        windows: [weekly, weekly]
+      ),
+      fillMode: .fill,
+      now: now
+    )
+    // header (26) + two window rows (36 each)
+    #expect(withWindows.subviews.count == 3)
+    #expect(withWindows.header.frame.origin.y == 0)
+    #expect(withWindows.subviews[1].frame.origin.y == 26)
+
+    let unavailable = ProviderSectionView(
+      provider: .claude,
+      color: .systemOrange,
+      result: ProviderResult(
+        provider: .claude,
+        ok: false,
+        source: "error",
+        error: "Usage unavailable",
+        windows: []
+      ),
+      fillMode: .fill,
+      now: now
+    )
+    // header (26) + status row (22)
+    #expect(unavailable.frame.height == 48)
+
+    let needsSignIn = ProviderSectionView(
+      provider: .antigravity,
+      color: .systemPurple,
+      result: ProviderResult(
+        provider: .antigravity,
+        ok: false,
+        source: "error",
+        error: "Sign in required",
+        windows: [],
+        needsAuth: true
+      ),
+      fillMode: .fill,
+      now: now
+    )
+    // header (26) + status row (22) + sign-in row (26)
+    #expect(needsSignIn.frame.height == 74)
+    #expect(needsSignIn.subviews.compactMap { $0 as? SignInRowView }.count == 1)
+
+    withWindows.updateMoveLimits(canMoveUp: false, canMoveDown: true)
+    let chevrons = withWindows.header.subviews.compactMap { $0 as? MenuIconButton }
+    #expect(chevrons.count == 2)
+    #expect(chevrons[0].isHidden == true)
+    #expect(chevrons[1].isHidden == false)
+
+    let image = NSImage(size: needsSignIn.frame.size)
+    image.lockFocus()
+    needsSignIn.draw(needsSignIn.bounds)
+    image.unlockFocus()
+  }
+
+  @Test("SignInRowView draws its label and fires on click")
+  @MainActor
+  func signInRow() {
+    var clicks = 0
+    let row = SignInRowView(title: "Sign in to Codex…", onClick: { clicks += 1 })
+    #expect(row.frame.width == 286)
+    #expect(row.frame.height == 26)
+    #expect(row.isFlipped == true)
+
+    row.mouseDown(with: NSEvent())
+    #expect(clicks == 1)
+
+    let image = NSImage(size: row.frame.size)
+    image.lockFocus()
+    row.draw(row.bounds)
+    image.unlockFocus()
+  }
+
+  @Test("ProviderSectionsView stacks sections with separators and reorders in place")
+  @MainActor
+  func providerSectionsLayout() {
+    let codex = makeSection(provider: .codex, windowCount: 2)  // 26 + 72 = 98
+    let claude = makeSection(provider: .claude)                 // 26 + 22 = 48
+
+    let container = ProviderSectionsView(frame: .zero)
+    container.setSections([codex, claude])
+
+    #expect(container.frame.height == container.totalHeight)
+    #expect(container.frame.width == ProviderSectionsView.width)
+
+    let hairlines = container.subviews.compactMap { $0 as? NSBox }
+    #expect(hairlines.count == 1)
+    #expect(hairlines[0].frame.origin.y == CGFloat(98 + (9 - 1) / 2))
+
+    // Reordering keeps every section and the total height, just moves the slots.
+    container.applyOrder([.claude, .codex], moving: .claude, animated: false)
+    #expect(container.sections.map(\.provider) == [.claude, .codex])
+    #expect(claude.frame.origin.y == 0)
+    #expect(codex.frame.origin.y == CGFloat(48 + 9))
+    #expect(container.totalHeight == CGFloat(98 + 9 + 48))
+
+    // Move limits follow the new positions.
+    container.updateMoveLimits()
+    #expect(chevrons(of: claude) == [true, false])
+    #expect(chevrons(of: codex) == [false, true])
+
+    // A bogus order is ignored rather than destroying the list.
+    container.applyOrder([.codex], animated: false)
+    #expect(container.sections.map(\.provider) == [.claude, .codex])
+  }
+
+  @Test("Reordering provider sections slides them into place and restores their opacity")
+  @MainActor
+  func providerSectionsAnimatedReorder() async throws {
+    let codex = makeSection(provider: .codex, windowCount: 2)  // 98
+    let claude = makeSection(provider: .claude)                 // 48
+
+    let container = ProviderSectionsView(frame: .zero)
+    container.setSections([codex, claude])
+    let heightBefore = container.totalHeight
+
+    // Claude moves up past Codex: Codex changes position, so it dissolves
+    // while it slides, and comes back once everything has settled.
+    container.applyOrder([.claude, .codex], moving: .claude, animated: true)
+    #expect(container.sections.map(\.provider) == [.claude, .codex])
+    #expect(container.totalHeight == heightBefore)
+
+    // Yield the main actor rather than spinning the run loop: the test body is
+    // itself a main-queue job, so queued main work only runs once it suspends.
+    try await Task.sleep(for: .seconds(1))
+
+    #expect(claude.frame.origin.y == 0)
+    #expect(codex.frame.origin.y == CGFloat(48 + 9))
+    #expect(container.frame.height == heightBefore)
+    #expect(codex.alphaValue == 1)
+    #expect(claude.alphaValue == 1)
+  }
+
+  @MainActor
+  private func makeSection(provider: Provider, windowCount: Int = 0) -> ProviderSectionView {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let windows = (0..<windowCount).map { index in
+      PressureMath.window(
+        provider: provider,
+        speed: index == 0 ? .slow : .fast,
+        usedPercent: 20 + Double(index * 5),
+        resetAt: now.addingTimeInterval(3600),
+        limitWindowSeconds: index == 0 ? 3600 * 24 * 7 : 3600 * 5,
+        now: now
+      )
+    }
+    let result = ProviderResult(
+      provider: provider,
+      ok: !windows.isEmpty,
+      source: "live",
+      error: windows.isEmpty ? "Usage unavailable" : nil,
+      windows: windows
+    )
+    return ProviderSectionView(
+      provider: provider,
+      color: .systemTeal,
+      result: result,
+      fillMode: .fill,
+      now: now
+    )
+  }
+
+  @MainActor
+  private func chevrons(of section: ProviderSectionView) -> [Bool] {
+    section.header.subviews.compactMap { $0 as? MenuIconButton }.map { $0.isHidden }
+  }
+
+  private func spinRunLoop(for seconds: TimeInterval) {
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+      RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+  }
 }
 
 @MainActor

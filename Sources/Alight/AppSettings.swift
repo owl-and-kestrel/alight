@@ -294,6 +294,36 @@ enum AppSettings {
     CGFloat(value(for: .meterWidth))
   }
 
+  // MARK: - Meter Visibility
+
+  /// Providers whose meter cards are hidden from the menu bar. A provider that
+  /// is absent from this list draws its meter (the default).
+  private static let hiddenMeterProvidersKey = "hiddenMeterProviders"
+
+  static var hiddenMeterProviders: Set<Provider> {
+    get {
+      let rawValues = UserDefaults.standard.stringArray(forKey: hiddenMeterProvidersKey) ?? []
+      return Set(rawValues.compactMap(Provider.init(rawValue:)))
+    }
+    set {
+      UserDefaults.standard.set(newValue.map(\.rawValue).sorted(), forKey: hiddenMeterProvidersKey)
+    }
+  }
+
+  static func meterVisible(_ provider: Provider) -> Bool {
+    !hiddenMeterProviders.contains(provider)
+  }
+
+  static func setMeterVisible(_ visible: Bool, for provider: Provider) {
+    var hidden = hiddenMeterProviders
+    if visible {
+      hidden.remove(provider)
+    } else {
+      hidden.insert(provider)
+    }
+    hiddenMeterProviders = hidden
+  }
+
   static var meterStyle: MeterIconStyle {
     MeterIconStyle(
       width: meterWidth,
@@ -435,6 +465,7 @@ enum AppSettings {
       meterFillModeKey,
       meterDirectionKey,
       meterLabelModeKey,
+      hiddenMeterProvidersKey,
       legacyCodexMeterLabelKey,
       legacyClaudeMeterLabelKey,
       legacyAntigravityMeterLabelKey,
