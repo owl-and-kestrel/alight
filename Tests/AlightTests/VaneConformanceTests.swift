@@ -42,7 +42,7 @@ struct VaneConformanceTests {
       let vector = try #require(try JSONSerialization.jsonObject(with: Data(vectorJSON.utf8)) as? NSDictionary)
       let expected = try #require(vector["expect"] as? NSDictionary)
 
-      let output = run.call(withArguments: [vectorJSON])
+      let output = try core.call(run, [vectorJSON])
       let outputJSON = try #require(output?.toString(), "\(url.lastPathComponent)")
       let actual = try #require(try JSONSerialization.jsonObject(with: Data(outputJSON.utf8)) as? NSDictionary)
       let name = url.lastPathComponent

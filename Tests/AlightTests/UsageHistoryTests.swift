@@ -238,6 +238,21 @@ struct UsageHistoryTests {
 
   @Test("a full history remains bounded when a new observation arrives")
   func countBound() throws {
+    var history = UsageHistory(persistenceURL: nil, now: UsageHistoryFixture.start)
+    let first = UsageHistoryFixture.start.addingTimeInterval(-Double(UsageHistory.maximumCount) * 10)
+    for index in 0..<UsageHistory.maximumCount {
+      history.record(UsageHistoryFixture.result(used: 20), capturedAt: first.addingTimeInterval(Double(index) * 10))
+    }
+    #expect(history.observations.count == UsageHistory.maximumCount)
+    let second = history.observations[1].id
+    history.record(UsageHistoryFixture.result(used: 21), capturedAt: UsageHistoryFixture.start)
+    #expect(history.observations.count == UsageHistory.maximumCount)
+    #expect(history.observations.last?.window.usedPercent == 21)
+    #expect(history.observations.first?.id == second)
+  }
+
+  @Test("a full pre-Fieldbook history document still loads for import")
+  func legacyDocumentBound() throws {
     struct Document: Encodable { let version: Int; let observations: [UsageObservation] }
     let directory = FileManager.default.temporaryDirectory.appending(path: "alight-history-bound-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -245,16 +260,14 @@ struct UsageHistoryTests {
     let url = directory.appending(path: "history.json")
     let segment = UUID()
     let window = UsageHistoryFixture.result(used: 20).windows[0]
-    let observations = (0..<UsageHistory.maximumCount).map { index in
-      UsageObservation(id: UUID(), segment: segment, capturedAt: UsageHistoryFixture.start.addingTimeInterval(Double(index - UsageHistory.maximumCount)), window: window, identity: UsageHistoryFixture.identity)
+    let count = UsageHistory.legacyDocumentMaximumCount
+    let observations = (0..<count).map { index in
+      UsageObservation(id: UUID(), segment: segment, capturedAt: UsageHistoryFixture.start.addingTimeInterval(Double(index - count)), window: window, identity: UsageHistoryFixture.identity)
     }
     try JSONEncoder().encode(Document(version: 1, observations: observations)).write(to: url)
-    var history = UsageHistory(persistenceURL: url, now: UsageHistoryFixture.start)
-    #expect(history.observations.count == UsageHistory.maximumCount)
-    history.record(UsageHistoryFixture.result(used: 21), capturedAt: UsageHistoryFixture.start)
-    #expect(history.observations.count == UsageHistory.maximumCount)
-    #expect(history.observations.last?.window.usedPercent == 21)
-    #expect(history.observations.first?.id == observations[1].id)
+    let history = UsageHistory(persistenceURL: url, now: UsageHistoryFixture.start)
+    #expect(history.persistenceIssue == nil)
+    #expect(history.observations.count == count)
   }
 }
 

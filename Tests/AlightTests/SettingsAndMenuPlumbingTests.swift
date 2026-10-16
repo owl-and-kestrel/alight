@@ -144,7 +144,7 @@ struct MenuRowViewsTests {
   @MainActor
   func usageHistoryWindowReopens() throws {
     _ = NSApplication.shared
-    let store = UsageStore(history: UsageHistory(persistenceURL: nil),
+    let store = UsageStore(history: UsageHistory(persistenceURL: nil), observationLog: nil,
       resultCache: UsageResultCache(persistenceURL: nil))
     let controller = UsageInsightsWindowController(store: store, frameAutosaveName: nil)
     let window = try #require(controller.window)

@@ -60,13 +60,7 @@ enum MenuBarRelevance {
     }
     var reduced = status
     reduced.results = status.results.map { result in
-      ProviderResult(
-        provider: result.provider, ok: result.ok, source: result.source, error: result.error,
-        windows: result.windows.filter { selected.contains($0.id) },
-        needsAuth: result.needsAuth, cacheAgeSeconds: result.cacheAgeSeconds,
-        observationIdentity: result.observationIdentity, quotaReport: result.quotaReport,
-        accountRef: result.accountRef, failureCode: result.failureCode, capturedAt: result.capturedAt
-      )
+      result.replacingWindows(result.windows.filter { selected.contains($0.id) })
     }
     return reduced
   }

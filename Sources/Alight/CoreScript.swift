@@ -68,6 +68,13 @@ final class CoreScript {
     return string
   }
 
+  /// Calls a function value from `evaluate`, surfacing any exception.
+  func call(_ function: JSValue, _ arguments: [Any]) throws -> JSValue? {
+    let result = function.call(withArguments: arguments)
+    try Self.takeException(from: context)
+    return result
+  }
+
   /// Evaluates `script` in the core's context (tests drive upstream exports
   /// directly through this).
   func evaluate(_ script: String) throws -> JSValue? {

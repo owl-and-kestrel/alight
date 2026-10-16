@@ -14,7 +14,7 @@ struct UsageInsightsView: View {
           Text("Usage history & runway").font(.largeTitle.bold())
           Text("Local live observations · percentages of each provider’s current allowance")
             .foregroundStyle(.secondary)
-          if let issue = store.history.persistenceIssue {
+          if let issue = store.historyIssue ?? store.history.persistenceIssue {
             Label(issue, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
           }
           if store.status.windows.isEmpty {

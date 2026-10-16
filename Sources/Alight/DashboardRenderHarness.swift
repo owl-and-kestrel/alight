@@ -17,6 +17,12 @@ enum DashboardRenderHarness {
     layout.cards[2].historyRange = .sixHours
     layout.cards[2].setEnabled(.history, true)
 
+    // Exercises the bundled core from the app bundle: Fieldbook pace, then
+    // Vane's menu-bar selection.
+    let paced = QuotaProjection.paced(status, now: now)
+    let shown = MenuBarRelevance.select(status: paced, layout: layout)
+    print("render-dashboard: menu bar shows \(shown.windows.map(\.id).sorted()) of \(paced.windows.count)")
+
     let actions = DashboardActions(color: { provider in
       Color(nsColor: GaugeIconRenderer.providerColor(provider, style: AppSettings.iconStyle))
     })

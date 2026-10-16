@@ -21,7 +21,11 @@ struct UsageObservation: Codable, Identifiable, Sendable {
 /// cache reconciliation. It owns no polling, credentials, or provider runtime.
 struct UsageHistory: Sendable {
   static let retention: TimeInterval = 14 * 24 * 60 * 60
-  static let maximumCount = 20_000
+  /// In-memory bound on the projection; the outbox on disk is bounded by
+  /// retention.
+  static let maximumCount = 60_000
+  /// The pre-Fieldbook history document held at most this many observations.
+  static let legacyDocumentMaximumCount = 20_000
   private(set) var observations: [UsageObservation] = []
   private(set) var persistenceIssue: String?
   private let persistenceURL: URL?
@@ -29,6 +33,10 @@ struct UsageHistory: Sendable {
   /// the clock catches up. Persist this fence until the next valid reading.
   private var clockDiscontinuities: Set<String> = []
   private var persistencePending = false
+  /// Capture-time bounds held, so in-order readings skip the clock-fence scan
+  /// and pruning skips its passes until something is old enough to drop.
+  private var latestCapturedAt: Date?
+  private var earliestCapturedAt: Date?
 
   init(persistenceURL: URL? = UsageHistory.defaultPersistenceURL, now: Date = Date()) {
     self.persistenceURL = persistenceURL
@@ -39,15 +47,17 @@ struct UsageHistory: Sendable {
         throw HistoryError.invalidDocument
       }
       let document = try JSONDecoder().decode(Document.self, from: Data(contentsOf: persistenceURL))
-      guard document.version == 1, document.observations.count <= Self.maximumCount,
+      guard document.version == 1, document.observations.count <= Self.legacyDocumentMaximumCount,
         document.observations.allSatisfy(Self.valid) else { throw HistoryError.invalidDocument }
       let discontinuities = Set(document.clockDiscontinuities ?? [])
-      guard discontinuities.count <= Self.maximumCount,
+      guard discontinuities.count <= Self.legacyDocumentMaximumCount,
         discontinuities.isSubset(of: Set(document.observations.map { $0.window.id })) else {
         throw HistoryError.invalidDocument
       }
       clockDiscontinuities = discontinuities
       observations = document.observations.sorted { $0.capturedAt < $1.capturedAt }
+      latestCapturedAt = observations.last?.capturedAt
+      earliestCapturedAt = observations.first?.capturedAt
       if prune(now: now) { persist() }
     } catch {
       persistenceIssue = "History could not be loaded. Live gauges still work; new observations will start a new history."
@@ -62,7 +72,9 @@ struct UsageHistory: Sendable {
     let fencesBefore = clockDiscontinuities
     // A failed/deferred poll also reveals clock movement. Do not let a later
     // successful poll silently bridge it, including after an app restart.
-    clockDiscontinuities.formUnion(observations.lazy.filter { $0.capturedAt > capturedAt }.map { $0.window.id })
+    if let latestCapturedAt, latestCapturedAt > capturedAt {
+      clockDiscontinuities.formUnion(observations.lazy.filter { $0.capturedAt > capturedAt }.map { $0.window.id })
+    }
     let clockChanged = fencesBefore != clockDiscontinuities
     guard result.ok, result.source == "live", result.cacheAgeSeconds == nil else {
       // Retention is a durable bound even while offline or between live polls.
@@ -89,6 +101,8 @@ struct UsageHistory: Sendable {
           capturedAt.timeIntervalSince($0.capturedAt) <= UsageForecast.maximumGap
       } ?? false
       observations.append(UsageObservation(id: UUID(), segment: continuous ? previous!.segment : UUID(), capturedAt: capturedAt, window: window, identity: identity))
+      latestCapturedAt = max(latestCapturedAt ?? capturedAt, capturedAt)
+      earliestCapturedAt = min(earliestCapturedAt ?? capturedAt, capturedAt)
       clockDiscontinuities.remove(window.id)
       appended = true
     }
@@ -102,13 +116,21 @@ struct UsageHistory: Sendable {
 
   @discardableResult
   private mutating func prune(now: Date) -> Bool {
+    let cutoff = now.addingTimeInterval(-Self.retention)
+    // Nothing to drop: skip the O(n) passes (replaying the outbox calls this
+    // once per entry).
+    if observations.count <= Self.maximumCount, (earliestCapturedAt ?? .distantFuture) >= cutoff {
+      return false
+    }
     let countBefore = observations.count
     let fencesBefore = clockDiscontinuities
     // Keep future points after a wall-clock reversal, so forecasting can refuse
     // explicitly instead of silently erasing the evidence of clock movement.
-    observations.removeAll { $0.capturedAt < now.addingTimeInterval(-Self.retention) }
+    observations.removeAll { $0.capturedAt < cutoff }
     if observations.count > Self.maximumCount { observations.removeFirst(observations.count - Self.maximumCount) }
     clockDiscontinuities.formIntersection(Set(observations.map { $0.window.id }))
+    earliestCapturedAt = observations.lazy.map(\.capturedAt).min()
+    latestCapturedAt = observations.lazy.map(\.capturedAt).max()
     return observations.count != countBefore || clockDiscontinuities != fencesBefore
   }
 
