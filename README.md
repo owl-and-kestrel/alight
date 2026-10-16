@@ -49,21 +49,23 @@ It never prints or stores credentials. Each provider is polled independently, so
 
 ### Usage insights source milestone
 
-Alight's data is what goes into Fieldbook. Each successful live reading becomes
-one `ok.fieldbook.quota-observation.v1` record per provider, checked by
-Fieldbook's own `quotaObservationProblems` and appended to an outbox in
-`Application Support/Alight/fieldbook-outbox/` (one JSON line per entry,
-`quota-observations-YYYY-MM-DD.jsonl` per UTC day, mode 0600, 14 days retained,
-`ok.alight.quota-outbox-entry.v1` envelope with a monotonic `sequence`, the
-Fieldbook `accountRef` digest and Alight's continuity identity). Unchanged
-readings are appended only as a ten-minute heartbeat. Everything Alight shows
-is a projection of that log: `UsageStore.history` is rebuilt from it at launch,
-live windows are displayed as their logged record reads back, and every
-window's pace comes from Fieldbook's `quotaWindowPace` (linear curve, no
-reserve, which is Alight's pace). The first launch imports the pre-Fieldbook
-`usage-history.json` into the outbox and leaves that file in place.
+Alight's data is what goes into Fieldbook. Every refresh is exported as an
+`ok.alight.quota-snapshot.v1` (see *Quota snapshot export*), and each snapshot
+is also appended to an outbox in `Application Support/Alight/fieldbook-outbox/`
+(one JSON line per entry, `quota-snapshots-YYYY-MM-DD.jsonl` per UTC day, mode
+0600, 14 days retained, `ok.alight.quota-outbox-entry.v1` envelope with a
+monotonic `sequence` and Alight's per-provider continuity identity). An
+unchanged snapshot is appended only as a ten-minute heartbeat. Everything
+Alight shows is Fieldbook's reading of those snapshots, computed by
+Fieldbook's own `normalizeAlightQuotaSnapshot` (`ok.fieldbook.provider-usage.v1`):
+the windows on the cards and in the menu bar, the history replayed at launch,
+and every window's pace (Fieldbook's `quotaWindowPace`, linear curve, no
+reserve, which is Alight's pace). A development build without a source commit
+exports nothing and keeps its history in memory. The pre-Fieldbook
+`usage-history.json` is read once per launch beneath the outbox until its
+readings age out, then deleted; it is never written again.
 
-Records are recorded at request completion, before cache reconciliation.
+Live readings keep their request-completion capture time.
 Cached, deferred, or failed refreshes never invent history. This supplements
 the existing last-good cache without changing its document format. Outbox
 write warnings appear in the insights view while live gauges continue working.
@@ -259,23 +261,24 @@ it in JavaScriptCore from one committed bundle,
 `Sources/Alight/Resources/alight-core.js`, built from pinned upstream versions
 by `scripts/build-core.mjs` (`npm run build:core`; `npm run check:core` fails on
 a stale bundle). It carries Vane's tree fitter (`@owl-kestrel/vane`) and
-Fieldbook's quota closure (`@owl-kestrel/fieldbook`, `src/quota`: the
-observation contract, its validator and the Astra-ported pace math), read with
-`git archive` at the commit pinned in the script. `CoreScript` supplies the
-host SHA-256 their `node:crypto` shims need; `Vane.swift` and
-`FieldbookQuota.swift` mirror only the contract types Alight uses.
+Fieldbook's quota closure (`@owl-kestrel/fieldbook`, `src/quota`: the Alight
+snapshot normalizer, provider-usage contract and Astra-ported pace math), read
+with `git archive` at the commit pinned in the script: Nest's owned Fieldbook
+main (`nest status fieldbook`). The build uses `FIELDBOOK_REPO` or a sibling
+`fieldbook` checkout when it has that commit, and otherwise fetches it from
+Fieldbook's Nest origin into `node_modules/.cache`. `CoreScript` supplies the
+host SHA-256 the `node:crypto` shims need; `Vane.swift` and
+`FieldbookQuota.swift` mirror only the contract fields Alight reads.
 `VaneConformanceTests` runs Vane's conformance vectors and
 `FieldbookQuotaTests` runs Fieldbook's Astra pace golden vectors (both vendored
-under `Tests/AlightTests/Fixtures`) through the bundle in JavaScriptCore.
-
-Fieldbook's quota layer is pinned at `70a1367` from the rescue branch
-`rescue/quota-contracts-20261010`; re-pin `FIELDBOOK_COMMIT` (and refresh the
-vendored pace vectors) once it lands on Fieldbook main. The build finds the
-Fieldbook repository from `FIELDBOOK_REPO` or a sibling `fieldbook` checkout.
+under `Tests/AlightTests/Fixtures`) through the bundle in JavaScriptCore, and
+reads real exported snapshots back through Fieldbook's normalizer.
 
 Until `@owl-kestrel/vane@0.1.0` clears the npm dependency cooldown, build with
 `VANE_DIST=<vane checkout with dist/> npm run build:core`; afterwards add the
-exact devDependency and confirm `npm run check:core` passes unchanged.
+exact devDependency and confirm `npm run check:core` passes unchanged. To move
+the Fieldbook pin, change `FIELDBOOK_COMMIT` and refresh the vendored pace
+vectors.
 
 ## License
 

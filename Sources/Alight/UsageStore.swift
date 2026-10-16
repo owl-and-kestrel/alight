@@ -32,34 +32,30 @@ final class UsageStore {
   /// desk (`docs/quota-snapshot-v1.md`). Nil disables the export.
   @ObservationIgnored private var quotaSnapshotExporter: QuotaSnapshotExporter?
 
-  /// The Fieldbook outbox: every live reading as an
-  /// `ok.fieldbook.quota-observation.v1` record. History is its projection.
-  /// Nil (tests) keeps history in memory only.
-  @ObservationIgnored private var observationLog: QuotaObservationLog?
+  /// The Fieldbook outbox: every exported `ok.alight.quota-snapshot.v1`.
+  /// History is Fieldbook's reading of it. Nil (tests) keeps history in
+  /// memory only.
+  @ObservationIgnored private var outbox: QuotaOutbox?
   /// Why the outbox could not be written, for the history surfaces.
   private(set) var historyIssue: String?
 
-  /// With `history`, the store uses it as given and logs nothing. Otherwise
-  /// history is projected from `observationLog`, which first imports the
-  /// pre-Fieldbook history file once.
+  /// With `history`, the store uses it as given. Otherwise history is
+  /// Fieldbook's reading of `outbox`, on top of the pre-Fieldbook history
+  /// file until its readings age out.
+  @MainActor
   init(
     history: UsageHistory? = nil,
-    observationLog: QuotaObservationLog? = QuotaObservationLog.standardDirectory.map(QuotaObservationLog.init),
+    outbox: QuotaOutbox? = QuotaOutbox.standardDirectory.map(QuotaOutbox.init),
     resultCache: UsageResultCache = UsageResultCache(),
     quotaSnapshotExporter: QuotaSnapshotExporter? = QuotaSnapshotExporter()
   ) {
     let now = Date()
     if let history {
       self.history = history
-    } else if var log = observationLog {
-      if log.isEmpty {
-        let legacy = UsageHistory()
-        let imported = log.importLegacy(legacy)
-        Self.logger.info("Imported \(imported, privacy: .public) legacy history captures into the Fieldbook outbox")
-      }
-      self.history = QuotaProjection.history(from: log.load(now: now), now: now)
-      self.observationLog = log
-      historyIssue = log.issue
+    } else if var outbox {
+      let entries = outbox.load(now: now)
+      self.history = QuotaProjection.history(base: .legacy(at: UsageHistory.legacyURL, now: now), entries: entries)
+      self.outbox = outbox
     } else {
       self.history = UsageHistory(persistenceURL: nil, now: now)
     }
@@ -139,63 +135,73 @@ final class UsageStore {
     // Each live reading is shown as its logged record reads back.
     var readings = [rawCodex, rawAntigravity]
     if let claudeCapturedAt { readings.append((claudeResult, claudeCapturedAt)) }
-    var recorded: [Provider: ProviderResult] = [:]
-    for (result, capturedAt) in readings.sorted(by: { $0.1 < $1.1 }) {
-      recorded[result.provider] = record(result, capturedAt: capturedAt)
-    }
     let completedAt = Date()
-    let reconciledCodex = resultCache.reconcile(recorded[.codex] ?? rawCodex.0, now: completedAt)
-    let reconciledClaude = resultCache.reconcile(recorded[.claude] ?? claudeResult, now: completedAt)
-    let reconciledAntigravity = resultCache.reconcile(recorded[.antigravity] ?? rawAntigravity.0, now: completedAt)
-    Self.logClaudeStatus(reconciledClaude, now: completedAt)
+    let reconciled = [
+      resultCache.reconcile(rawCodex.0, now: completedAt),
+      resultCache.reconcile(claudeResult, now: completedAt),
+      resultCache.reconcile(rawAntigravity.0, now: completedAt),
+    ]
+    Self.logClaudeStatus(reconciled[1], now: completedAt)
 
-    status = QuotaProjection.paced(
-      UsageStatus(generatedAt: completedAt, results: [reconciledCodex, reconciledClaude, reconciledAntigravity]),
-      now: completedAt
-    )
-
-    // Every refresh is exported, failures included; the export never feeds
-    // back into the menu. `attemptedAt` is this refresh's start; a live
-    // reading's capture time is its own request's completion.
+    // Every refresh is exported, failures included. `attemptedAt` is this
+    // refresh's start; a live reading's capture time is its own request's
+    // completion. What Alight then shows and remembers is Fieldbook's reading
+    // of that snapshot.
     quotaSnapshotExporter?.export([
-      .init(result: reconciledCodex, attemptedAt: now, liveCapturedAt: rawCodex.1),
-      .init(result: reconciledClaude, attemptedAt: now, liveCapturedAt: claudeCapturedAt),
-      .init(result: reconciledAntigravity, attemptedAt: now, liveCapturedAt: rawAntigravity.1),
+      .init(result: reconciled[0], attemptedAt: now, liveCapturedAt: rawCodex.1),
+      .init(result: reconciled[1], attemptedAt: now, liveCapturedAt: claudeCapturedAt),
+      .init(result: reconciled[2], attemptedAt: now, liveCapturedAt: rawAntigravity.1),
     ])
+    let identities = Dictionary(
+      readings.compactMap { reading in reading.0.observationIdentity.map { (reading.0.provider, $0) } },
+      uniquingKeysWith: { first, _ in first }
+    )
+    var shown = reconciled
+    if let snapshot = quotaSnapshotExporter?.lastWritten,
+      let reading = try? CoreScript.shared.get().normalizeAlightQuotaSnapshot(snapshot, readAt: completedAt),
+      reading.status == "observed" {
+      shown = QuotaProjection.shown(reconciled, reading: reading)
+      remember(snapshot, identities: identities, shown: shown, readings: readings)
+    } else {
+      // No snapshot (a development build without a source commit) or none
+      // Fieldbook could read: keep this session's history in memory.
+      for (result, capturedAt) in readings.sorted(by: { $0.1 < $1.1 }) {
+        history.record(result, capturedAt: capturedAt)
+      }
+    }
+
+    status = QuotaProjection.paced(UsageStatus(generatedAt: completedAt, results: shown), now: completedAt)
   }
 
-  /// Logs a live reading to the Fieldbook outbox (after Fieldbook's own
-  /// structural check) and records it in history as the log reads it back.
-  /// Returns the result to show; other readings pass through unchanged.
+  /// Appends the snapshot to the outbox and replays the appended entry into
+  /// history, exactly as a relaunch will. An unchanged snapshot adds nothing.
   @MainActor
-  private func record(_ result: ProviderResult, capturedAt: Date) -> ProviderResult {
-    guard let observation = AlightQuotaProducer.observation(for: result, capturedAt: capturedAt) else {
-      // Not a live reading: history still sees it for retention and clock fences.
-      history.record(result, capturedAt: capturedAt)
-      return result
+  private func remember(
+    _ snapshot: Data,
+    identities: [Provider: UsageObservationIdentity],
+    shown: [ProviderResult],
+    readings: [(ProviderResult, Date)]
+  ) {
+    guard outbox != nil else {
+      for (result, capturedAt) in readings.sorted(by: { $0.1 < $1.1 }) {
+        guard let projected = shown.first(where: { $0.provider == result.provider }) else { continue }
+        history.record(result.replacingWindows(projected.windows), capturedAt: capturedAt)
+      }
+      return
     }
-    if let problems = try? CoreScript.shared.get().quotaObservationProblems(observation), !problems.isEmpty {
-      Self.logger.error("Refusing an invalid quota observation for \(result.provider.rawValue, privacy: .public): \(problems.joined(separator: ","), privacy: .public)")
-      return result
-    }
-    let shown = QuotaProjection.result(result, as: observation, at: capturedAt)
-    guard observationLog != nil else {
-      history.record(shown, capturedAt: capturedAt)
-      return shown
-    }
-    switch observationLog?.append(observation, provider: result.provider, identity: result.observationIdentity, accountRef: result.accountRef) {
+    switch outbox?.append(snapshot, identities: identities) {
     case .appended(let entry):
-      history.record(entry)
+      QuotaProjection.record(entry, into: &history)
       historyIssue = nil
     case .unchanged:
-      // Same values as the last entry: history already ends there.
       break
     case .failed, nil:
-      // Keep this session's history going in memory.
-      history.record(shown, capturedAt: capturedAt)
-      historyIssue = observationLog?.issue
+      historyIssue = outbox?.issue
+      for (result, capturedAt) in readings.sorted(by: { $0.1 < $1.1 }) {
+        guard let projected = shown.first(where: { $0.provider == result.provider }) else { continue }
+        history.record(result.replacingWindows(projected.windows), capturedAt: capturedAt)
+      }
     }
-    return shown
   }
 
   /// Runs one provider poll and stamps a successful reading with its own

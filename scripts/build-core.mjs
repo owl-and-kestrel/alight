@@ -10,8 +10,10 @@
 // Vane resolves from node_modules, or from VANE_DIST (a Vane checkout with a
 // built dist/) while the published version is inside the npm cooldown.
 // Fieldbook's quota closure (src/quota) is read with `git archive` at
-// FIELDBOOK_COMMIT from FIELDBOOK_REPO (default: a sibling `fieldbook`
-// checkout), so the pin holds whatever that checkout has checked out.
+// FIELDBOOK_COMMIT, so the pin holds whatever any checkout has checked out.
+// The commit comes from FIELDBOOK_REPO or a sibling `fieldbook` checkout when
+// one has it, otherwise it is fetched from Fieldbook's Nest origin into
+// node_modules/.cache (FIELDBOOK_REMOTE overrides the URL).
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -40,22 +42,32 @@ mkdirSync(vaneStage, { recursive: true });
 cpSync(join(vaneDir, "dist/src"), join(vaneStage, "dist/src"), { recursive: true });
 const vaneEntry = join(vaneStage, "dist/src/index.js");
 
-// Re-pin when the quota layer lands on Fieldbook main.
-const FIELDBOOK_COMMIT = "70a13675a443ee80183ef0dca125661791345ce7";
-const fieldbookRepo = [process.env.FIELDBOOK_REPO, join(root, "../fieldbook"), join(root, "../../fieldbook")]
+// Nest's owned Fieldbook main (`nest status fieldbook`).
+const FIELDBOOK_COMMIT = "d914356d332b6078bf42c873c7488313000013ab";
+const FIELDBOOK_REMOTE = process.env.FIELDBOOK_REMOTE ?? "ssh://git@5.161.252.182/srv/git/fieldbook.git";
+const hasCommit = (path) => {
+  try {
+    return execFileSync("git", ["-C", path, "cat-file", "-t", FIELDBOOK_COMMIT], { stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim() === "commit";
+  } catch {
+    return false;
+  }
+};
+let fieldbookRepo = [process.env.FIELDBOOK_REPO, join(root, "../fieldbook"), join(root, "../../fieldbook")]
   .filter(Boolean)
   .map((path) => resolve(path))
-  .find((path) => {
-    try {
-      return execFileSync("git", ["-C", path, "cat-file", "-t", FIELDBOOK_COMMIT], { stdio: ["ignore", "pipe", "ignore"] })
-        .toString().trim() === "commit";
-    } catch {
-      return false;
-    }
-  });
+  .find(hasCommit);
 if (!fieldbookRepo) {
-  console.error(`build-core: no Fieldbook repository containing ${FIELDBOOK_COMMIT}; set FIELDBOOK_REPO`);
-  process.exit(1);
+  fieldbookRepo = join(root, "node_modules/.cache/alight-fieldbook.git");
+  if (!hasCommit(fieldbookRepo)) {
+    if (!existsSync(fieldbookRepo)) execFileSync("git", ["init", "--bare", "--quiet", fieldbookRepo]);
+    console.log(`build-core: fetching Fieldbook ${FIELDBOOK_COMMIT.slice(0, 7)} from ${FIELDBOOK_REMOTE}`);
+    execFileSync("git", ["-C", fieldbookRepo, "fetch", "--quiet", "--depth=1", FIELDBOOK_REMOTE, FIELDBOOK_COMMIT], { stdio: "inherit" });
+  }
+  if (!hasCommit(fieldbookRepo)) {
+    console.error(`build-core: Fieldbook ${FIELDBOOK_COMMIT} unavailable; set FIELDBOOK_REPO or FIELDBOOK_REMOTE`);
+    process.exit(1);
+  }
 }
 const fieldbookDir = join(stage, "fieldbook");
 mkdirSync(fieldbookDir, { recursive: true });
@@ -74,6 +86,7 @@ const result = await build({
   legalComments: "none",
   alias: {
     "@owl-kestrel/vane": vaneEntry,
+    "@owl-kestrel/fieldbook/quota/alight-snapshot": join(fieldbookDir, "src/quota/alight-snapshot.mjs"),
     "@owl-kestrel/fieldbook/quota": join(fieldbookDir, "src/quota/index.mjs"),
     "node:crypto": join(root, "js/shims/node-crypto.mjs"),
   },

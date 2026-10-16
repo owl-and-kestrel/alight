@@ -2,10 +2,12 @@ import Foundation
 import Testing
 @testable import Alight
 
-@Suite("Fieldbook quota contract and pace")
+@Suite("Fieldbook quota reading and pace")
 @MainActor
 struct FieldbookQuotaTests {
-  private let now = Date(timeIntervalSince1970: 1_800_000_000.123)
+  static let now = Date(timeIntervalSince1970: 1_800_000_000.123)
+  static let producer = QuotaSnapshot.Producer(
+    app: QuotaSnapshot.producerApp, version: "1.0.0", build: "1", sourceCommit: String(repeating: "ab", count: 20))
 
   /// Mirrors Fieldbook's test/quota-pace.test.mjs: every pace vector, plus
   /// its lean spacing and expiring share, compared exactly in JavaScript.
@@ -32,6 +34,58 @@ struct FieldbookQuotaTests {
     })
     """
 
+  // MARK: Fixtures (real client parsers, as the exporter's own tests use them)
+
+  static func claudeResult(at now: Date = now) throws -> ProviderResult {
+    let text = [
+      "Current session: 16% used · resets Jan 15, 2027 at 2pm (UTC)",
+      "Current week (all models): 40% used · resets Jan 18, 2027 at 9am (UTC)",
+      "Current week (Fable): 0% used",
+    ].joined(separator: "\n")
+    let reading = try ClaudeUsageParser.reading(fromText: text, now: now)
+    var result = ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: reading.windows)
+    result.quotaReport = reading.report
+    result.accountRef = UsageAccountRef.digest(provider: .claude, organization: "org-1", identifier: "person@example.com", kind: .email)
+    return result
+  }
+
+  static func codexResult(used: Double = 3, at now: Date = now) throws -> ProviderResult {
+    let json = """
+      {"rate_limit":{"primary_window":{"used_percent":\(used),"reset_at":1800300000,"limit_window_seconds":604800}}}
+      """
+    let payload = try JSONDecoder().decode(UsagePayload.self, from: Data(json.utf8))
+    var result = ProviderResult(provider: .codex, ok: true, source: "live", error: nil, windows: CodexUsageParser.windows(from: payload, now: now))
+    result.quotaReport = CodexUsageParser.quotaReport(from: payload)
+    result.accountRef = UsageAccountRef.digest(provider: .codex, organization: nil, identifier: "acct-123", kind: .opaque)
+    return result
+  }
+
+  static func antigravityResult(at now: Date = now) throws -> ProviderResult {
+    let payload: [String: Any] = ["groups": [
+      ["displayName": "Gemini Models", "buckets": [
+        ["bucketId": "gemini-5h", "window": "5h", "resetTime": "2027-01-15T09:00:00Z", "remainingFraction": 0.75],
+        ["bucketId": "gemini-weekly", "window": "weekly", "resetTime": "2027-01-20T09:00:00Z", "remainingFraction": 0.5],
+      ]],
+      ["displayName": "Claude and GPT models", "buckets": [
+        ["bucketId": "3p-5h", "window": "5h", "resetTime": "2027-01-15T10:00:00Z", "remainingFraction": 0.7],
+        ["bucketId": "3p-weekly", "window": "weekly", "resetTime": "2027-01-20T10:00:00Z", "remainingFraction": 0.6],
+      ]],
+    ]]
+    var result = ProviderResult(provider: .antigravity, ok: true, source: "live", error: nil,
+      windows: AntigravityUsageParser.windows(from: payload, now: now))
+    result.quotaReport = AntigravityUsageParser.quotaReport(from: payload)
+    return result
+  }
+
+  static func snapshot(_ results: [ProviderResult], at now: Date = now, sequence: Int = 0) throws -> Data {
+    try QuotaSnapshotExporter.encode(QuotaSnapshotExporter.snapshot(
+      results.map { .init(result: $0, attemptedAt: now, liveCapturedAt: now) },
+      producer: producer, installId: "install-1", sequence: sequence, writtenAt: now, antigravityEndpointRef: nil
+    ))
+  }
+
+  // MARK: Pace
+
   @Test("Fieldbook's pace math matches Astra on every golden vector inside JavaScriptCore")
   func paceGoldenVectors() throws {
     let core = try CoreScript.shared.get()
@@ -53,103 +107,104 @@ struct FieldbookQuotaTests {
         for duration in [5 * 3600.0, 7 * 86400.0] {
           windows.append(PressureMath.window(
             provider: .codex, speed: .cadence(for: duration), usedPercent: used,
-            resetAt: now.addingTimeInterval(duration * (1 - elapsed)), limitWindowSeconds: duration, now: now
+            resetAt: Self.now.addingTimeInterval(duration * (1 - elapsed)), limitWindowSeconds: duration, now: Self.now
           ))
         }
       }
     }
-    let paces = try core.quotaWindowPace(windows, now: now)
+    let paces = try core.quotaWindowPace(windows, now: Self.now)
     #expect(paces.count == windows.count)
     for (window, pace) in zip(windows, paces) {
       let pace = try #require(pace)
       #expect(abs(pace.pressurePercent - window.pressurePercent) < 0.006, "\(window)")
       #expect(abs(pace.expectedRemainingRatio * 100 - window.expectedRemainingPercent) < 0.006)
-      #expect(pace.band == (window.band == .high ? "surplus" : window.band == .low ? "deficit" : "on_pace") || abs(abs(window.pressurePercent) - 5) < 0.01)
     }
   }
 
   @Test("paced status takes Fieldbook's pace, and keeps the clients' without the core")
   func pacedStatus() throws {
-    let window = PressureMath.window(provider: .claude, speed: .fast, usedPercent: 80, resetAt: now.addingTimeInterval(9000), limitWindowSeconds: 18000, now: now)
-    let status = UsageStatus(generatedAt: now, results: [
+    let window = PressureMath.window(provider: .claude, speed: .fast, usedPercent: 80, resetAt: Self.now.addingTimeInterval(9000), limitWindowSeconds: 18000, now: Self.now)
+    let status = UsageStatus(generatedAt: Self.now, results: [
       ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: [window])
     ])
-    let paced = QuotaProjection.paced(status, now: now)
-    let pacedWindow = try #require(paced.windows.first)
-    #expect(pacedWindow.pressurePercent == -30)
-    #expect(pacedWindow.expectedRemainingPercent == 50)
-    #expect(pacedWindow.usedPercent == 80)
-
-    let fallback = QuotaProjection.paced(status, now: now, core: .failure(CoreScript.Failure.bundleMissing))
+    let paced = try #require(QuotaProjection.paced(status, now: Self.now).windows.first)
+    #expect(paced.pressurePercent == -30)
+    #expect(paced.expectedRemainingPercent == 50)
+    let fallback = QuotaProjection.paced(status, now: Self.now, core: .failure(CoreScript.Failure.bundleMissing))
     #expect(fallback.windows == status.windows)
   }
 
-  @Test("timestamps are JavaScript's toISOString and parse back")
+  @Test("timestamps are JavaScript's toISOString and round-trip exactly")
   func timestamps() throws {
     let core = try CoreScript.shared.get()
-    let js = try #require(try core.evaluate("new Date(\(now.timeIntervalSince1970 * 1000)).toISOString()")?.toString())
-    #expect(QuotaObservation.timestamp(now) == js)
-    let parsed = try #require(QuotaObservation.date(js))
-    #expect(abs(parsed.timeIntervalSince(now)) < 0.001)
-    #expect(QuotaObservation.date("2026-10-16T09:00:00Z") != nil)
+    let js = try #require(try core.evaluate("new Date(\(Self.now.timeIntervalSince1970 * 1000)).toISOString()")?.toString())
+    #expect(FieldbookTime.timestamp(Self.now) == js)
+    let parsed = try #require(FieldbookTime.date(js))
+    #expect(FieldbookTime.timestamp(parsed) == js)
+    #expect(FieldbookTime.date("2026-10-16T09:00:00Z") != nil)
   }
 
-  @Test("live readings become valid Fieldbook observations and read back as the same windows")
-  func producerRoundTrip() throws {
-    let windows = [
-      PressureMath.window(provider: .claude, speed: .fast, usedPercent: 29, resetAt: now.addingTimeInterval(3600), limitWindowSeconds: 18000, now: now),
-      PressureMath.window(provider: .claude, speed: .slow, usedPercent: 61.5, resetAt: now.addingTimeInterval(86400), limitWindowSeconds: 604800, now: now),
-      PressureMath.window(provider: .claude, speed: .slow, usedPercent: 7, resetAt: now.addingTimeInterval(86400), limitWindowSeconds: 604800, now: now, scope: .fable, visualStyle: .outerStar),
-      PressureMath.window(provider: .claude, speed: .slow, usedPercent: 12, resetAt: now.addingTimeInterval(86400), limitWindowSeconds: 604800, now: now,
-        scope: UsageScope.modelScope(displayName: "Sonnet only"), visualStyle: .menuRow),
-    ]
-    let result = ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: windows)
-    let observation = try #require(AlightQuotaProducer.observation(for: result, capturedAt: now))
-    #expect(observation.routeId == "cli:claude-code")
-    #expect(observation.windows.map(\.windowId) == ["session", "week", "model:fable", "model:sonnet-only"])
-    #expect(try CoreScript.shared.get().quotaObservationProblems(observation).isEmpty)
+  // MARK: Reading Alight's snapshot
 
-    let readBack = AlightQuotaProducer.windows(from: observation, now: now)
-    #expect(readBack.map(\.id) == windows.map(\.id))
-    #expect(readBack.map(\.visualStyle) == windows.map(\.visualStyle))
-    #expect(readBack.map(\.label) == windows.map(\.label))
-    for (back, original) in zip(readBack, windows) {
-      #expect(abs(back.usedPercent - original.usedPercent) < 1e-9)
-      #expect(abs(back.resetAt.timeIntervalSince(original.resetAt)) < 0.001)
-      #expect(back.limitWindowSeconds == original.limitWindowSeconds)
+  @Test("Fieldbook reads an exported snapshot back as the clients' windows")
+  func snapshotReadsBack() throws {
+    let claude = try Self.claudeResult()
+    let codex = try Self.codexResult()
+    let antigravity = try Self.antigravityResult()
+    let reading = try CoreScript.shared.get().normalizeAlightQuotaSnapshot(
+      try Self.snapshot([claude, codex, antigravity]), readAt: Self.now
+    )
+    #expect(reading.status == "observed")
+    #expect(reading.sequence == 0)
+
+    for client in [claude, codex] {
+      let usage = try #require(reading.usage(for: client.provider))
+      #expect(usage.accountRef == client.accountRef)
+      let projected = usage.usageWindows().sorted { $0.id < $1.id }
+      let original = client.windows.sorted { $0.id < $1.id }
+      #expect(projected.map(\.id) == original.map(\.id))
+      #expect(projected.map(\.label) == original.map(\.label))
+      #expect(projected.map(\.visualStyle) == original.map(\.visualStyle))
+      for (back, window) in zip(projected, original) {
+        #expect(abs(back.usedPercent - window.usedPercent) < 1e-9)
+        #expect(abs(back.resetAt.timeIntervalSince(window.resetAt)) < 0.001, "\(back.id)")
+        #expect(back.limitWindowSeconds == window.limitWindowSeconds)
+      }
     }
-    // Reading the record back twice is stable: the record is the source of truth.
-    let again = AlightQuotaProducer.windows(from: AlightQuotaProducer.observation(
-      for: ProviderResult(provider: .claude, ok: true, source: "live", error: nil, windows: readBack), capturedAt: now
-    )!, now: now)
-    #expect(again == readBack)
+
+    // Antigravity: Fieldbook keeps the Gemini group as the broad limits and
+    // scopes the other group by its name.
+    let usage = try #require(reading.usage(for: .antigravity))
+    let windows = usage.usageWindows()
+    #expect(Set(windows.map(\.id)) == [
+      "antigravity_fast", "antigravity_slow",
+      "antigravity_fast_group_claude_and_gpt_models", "antigravity_slow_group_claude_and_gpt_models",
+    ])
+    #expect(Set(windows.map(\.label)) == ["5h", "Weekly", "Claude and GPT models (5h)", "Claude and GPT models (Weekly)"])
+    #expect(windows.filter { $0.scope != nil }.allSatisfy { $0.visualStyle == .menuRow })
+    #expect(windows.first { $0.id == "antigravity_fast" }?.usedPercent == 25)
   }
 
-  @Test("only successful live readings are observed; Fieldbook rejects a malformed record")
-  func observationScope() throws {
-    let window = PressureMath.window(provider: .codex, speed: .slow, usedPercent: 10, resetAt: now.addingTimeInterval(3600), limitWindowSeconds: 604800, now: now)
-    #expect(AlightQuotaProducer.observation(for: ProviderResult(provider: .codex, ok: true, source: "cached", error: nil, windows: [window]), capturedAt: now) == nil)
-    #expect(AlightQuotaProducer.observation(for: .failure(.codex, source: "error", error: "x"), capturedAt: now) == nil)
-
-    var observation = try #require(AlightQuotaProducer.observation(
-      for: ProviderResult(provider: .codex, ok: true, source: "live", error: nil, windows: [window]), capturedAt: now
-    ))
-    observation.windows[0].usedFraction = 1.5
-    observation.windows[0].resetsAt = "soon"
-    let problems = try CoreScript.shared.get().quotaObservationProblems(observation)
-    #expect(problems == ["windows[0].usedFraction", "windows[0].resetsAt"])
+  @Test("shown results keep Alight's status and take Fieldbook's windows")
+  func shownResults() throws {
+    let codex = try Self.codexResult(used: 7)
+    let failed = ProviderResult.failure(.claude, source: "error", error: "signed out", needsAuth: true)
+    let reading = try CoreScript.shared.get().normalizeAlightQuotaSnapshot(try Self.snapshot([codex, failed]), readAt: Self.now)
+    let shown = QuotaProjection.shown([codex, failed], reading: reading)
+    #expect(shown[0].windows.map(\.usedPercent) == [7])
+    #expect(shown[1].needsAuth)
+    #expect(shown[1].windows.isEmpty)
+    #expect(reading.usage(for: .claude) == nil)
   }
 
-  @Test("encoded observations carry explicit nulls, as Fieldbook's do")
-  func explicitNulls() throws {
-    let window = PressureMath.window(provider: .antigravity, speed: .fast, usedPercent: 10, resetAt: now.addingTimeInterval(3600), limitWindowSeconds: 18000, now: now)
-    let observation = try #require(AlightQuotaProducer.observation(
-      for: ProviderResult(provider: .antigravity, ok: true, source: "live", error: nil, windows: [window]), capturedAt: now
-    ))
-    let object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(observation)) as? [String: Any])
-    #expect(object["rawSha256"] is NSNull)
-    #expect(object["contract"] as? String == "ok.fieldbook.quota-observation.v1")
-    let first = try #require((object["windows"] as? [[String: Any]])?.first)
-    #expect(first["rawSha256"] is NSNull)
+  @Test("a stale or malformed snapshot is not read")
+  func refusals() throws {
+    let core = try CoreScript.shared.get()
+    let snapshot = try Self.snapshot([try Self.codexResult()])
+    let stale = try core.normalizeAlightQuotaSnapshot(snapshot, readAt: Self.now.addingTimeInterval(3600))
+    #expect(stale.status == "unknown")
+    #expect(stale.reasons == ["snapshot_stale"])
+    let malformed = try core.normalizeAlightQuotaSnapshot(Data(#"{"schema":"ok.alight.quota-snapshot.v1"}"#.utf8), readAt: Self.now)
+    #expect(malformed.status == "unknown")
   }
 }

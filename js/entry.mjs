@@ -1,11 +1,13 @@
 // Alight's JavaScriptCore entry point. Glue only: the logic lives in the
 // upstream packages, and Swift talks to it through JSON strings so neither
 // side depends on JSValue's object conversion rules.
-import { quotaObservationProblems, quotaWindowPace } from "@owl-kestrel/fieldbook/quota";
+import { quotaWindowPace } from "@owl-kestrel/fieldbook/quota";
+import { normalizeAlightQuotaSnapshot } from "@owl-kestrel/fieldbook/quota/alight-snapshot";
 import { fitTree } from "@owl-kestrel/vane";
 
 export * as vane from "@owl-kestrel/vane";
 export * as fieldbookQuota from "@owl-kestrel/fieldbook/quota";
+export * as fieldbookAlightSnapshot from "@owl-kestrel/fieldbook/quota/alight-snapshot";
 
 /**
  * Fits `treeJSON` (a Vane LodNode) with `optionsJSON` (Vane FitOptions minus
@@ -26,9 +28,14 @@ export function fitJSON(treeJSON, optionsJSON, accept) {
   });
 }
 
-/** Fieldbook's structural check of an ok.fieldbook.quota-observation.v1 value. */
-export function quotaObservationProblemsJSON(observationJSON) {
-  return JSON.stringify(quotaObservationProblems(JSON.parse(observationJSON)));
+/**
+ * Fieldbook's reading of an `ok.alight.quota-snapshot.v1`: one
+ * `ok.fieldbook.provider-usage.v1` per provider, or an unknown result with
+ * reasons. `readAtMs` is when the snapshot is read (its own writtenAt when
+ * replaying the outbox).
+ */
+export function normalizeAlightQuotaSnapshotJSON(snapshotJSON, readAtMs) {
+  return JSON.stringify(normalizeAlightQuotaSnapshot(JSON.parse(snapshotJSON), { readAt: readAtMs }));
 }
 
 /**

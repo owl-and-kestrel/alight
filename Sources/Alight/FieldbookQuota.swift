@@ -1,78 +1,87 @@
 import Foundation
 
-/// Swift mirror of Fieldbook's `ok.fieldbook.quota-observation.v1` (Fieldbook
-/// `src/quota/observation.mjs`, pinned in scripts/build-core.mjs). Alight is a
-/// producer of these records; their validation and pace math run from
-/// Fieldbook's own code through `CoreScript`.
-struct QuotaObservation: Codable, Equatable, Sendable {
-  static let contract = "ok.fieldbook.quota-observation.v1"
-
-  struct Parser: Codable, Equatable, Sendable {
-    var id: String
-    var version: Int
+/// What Fieldbook's `normalizeAlightQuotaSnapshot` (src/quota/alight-snapshot.mjs,
+/// pinned in scripts/build-core.mjs) returns for one `ok.alight.quota-snapshot.v1`:
+/// the snapshot's reading as Fieldbook records it. Only the fields Alight
+/// shows are mirrored; Fieldbook owns the mapping itself.
+struct FieldbookAlightReading: Decodable, Equatable, Sendable {
+  struct ProviderReading: Decodable, Equatable, Sendable {
+    let provider: Provider
+    /// The snapshot's status for this provider (`observed`, `failed`, ...).
+    let status: String
+    let usage: FieldbookProviderUsage
   }
 
-  struct Window: Codable, Equatable, Sendable {
-    var windowId: String
-    var label: String
-    var usedFraction: Double
-    var remainingFraction: Double
-    var resetsAt: String
-    var resetPrecision: String
-    var windowSeconds: Double
-    var observedAt: String
-    var source: String
-    var rawSha256: String?
-    var inferred: [String]
-    var unknown: [String]
+  /// `observed`, or `unknown` with `reasons` (stale, invalid, regression).
+  let status: String
+  let reasons: [String]
+  let sequence: Int?
+  let providers: [ProviderReading]
 
-    // Fieldbook's records always carry `rawSha256`, null when absent.
-    func encode(to encoder: Encoder) throws {
-      var container = encoder.container(keyedBy: CodingKeys.self)
-      try container.encode(windowId, forKey: .windowId)
-      try container.encode(label, forKey: .label)
-      try container.encode(usedFraction, forKey: .usedFraction)
-      try container.encode(remainingFraction, forKey: .remainingFraction)
-      try container.encode(resetsAt, forKey: .resetsAt)
-      try container.encode(resetPrecision, forKey: .resetPrecision)
-      try container.encode(windowSeconds, forKey: .windowSeconds)
-      try container.encode(observedAt, forKey: .observedAt)
-      try container.encode(source, forKey: .source)
-      try container.encode(rawSha256, forKey: .rawSha256)
-      try container.encode(inferred, forKey: .inferred)
-      try container.encode(unknown, forKey: .unknown)
+  func usage(for provider: Provider) -> FieldbookProviderUsage? {
+    providers.first { $0.provider == provider && $0.usage.status == "observed" }?.usage
+  }
+}
+
+/// Mirror of `ok.fieldbook.provider-usage.v1` (src/quota/provider-usage.mjs).
+struct FieldbookProviderUsage: Decodable, Equatable, Sendable {
+  struct Scope: Decodable, Equatable, Sendable {
+    let kind: String
+    let key: String
+    let displayName: String
+  }
+
+  struct Window: Decodable, Equatable, Sendable {
+    let windowId: String
+    let scope: Scope?
+    let usedPct: Double
+    let resetAt: String?
+    let resetSource: String
+    let windowSeconds: Double?
+    let observedAt: String
+  }
+
+  let provider: Provider
+  let status: String
+  let observedAt: String?
+  let accountRef: String?
+  let windows: [Window]
+  let reasons: [String]
+
+  /// Alight's windows for this usage. A window the provider has not started
+  /// (no reset reported, nothing used) resets one window after the reading,
+  /// as Alight's clients read it; any other window without a reset or a
+  /// duration cannot be placed and is left out.
+  func usageWindows() -> [UsageWindow] {
+    windows.compactMap { window in
+      guard let seconds = window.windowSeconds, seconds > 0, let observedAt = FieldbookTime.date(window.observedAt) else { return nil }
+      let resetAt: Date
+      if let reported = window.resetAt.flatMap(FieldbookTime.date) {
+        resetAt = reported
+      } else if window.usedPct == 0 {
+        resetAt = observedAt.addingTimeInterval(seconds)
+      } else {
+        return nil
+      }
+      var scope: UsageScope?
+      var style = UsageVisualStyle.hand
+      if let reported = window.scope {
+        scope = reported.kind == UsageScope.fable.kind && reported.key == UsageScope.fable.key
+          ? .fable
+          : UsageScope(kind: reported.kind, key: reported.key, displayName: reported.displayName)
+        style = scope == .fable ? .outerStar : .menuRow
+      }
+      return PressureMath.window(
+        provider: provider, speed: .cadence(for: seconds), usedPercent: window.usedPct, resetAt: resetAt,
+        limitWindowSeconds: seconds, now: observedAt, scope: scope, visualStyle: style
+      )
     }
   }
+}
 
-  var contract: String = Self.contract
-  var routeId: String
-  var poolId: String
-  var source: String
-  var parser: Parser
-  var observedAt: String?
-  var rawSha256: String?
-  var status: String
-  var windows: [Window]
-  var unknown: [String]
-  var reasons: [String]
-
-  // `observedAt` and `rawSha256` are always present, null when unknown.
-  func encode(to encoder: Encoder) throws {
-    var container = encoder.container(keyedBy: CodingKeys.self)
-    try container.encode(contract, forKey: .contract)
-    try container.encode(routeId, forKey: .routeId)
-    try container.encode(poolId, forKey: .poolId)
-    try container.encode(source, forKey: .source)
-    try container.encode(parser, forKey: .parser)
-    try container.encode(observedAt, forKey: .observedAt)
-    try container.encode(rawSha256, forKey: .rawSha256)
-    try container.encode(status, forKey: .status)
-    try container.encode(windows, forKey: .windows)
-    try container.encode(unknown, forKey: .unknown)
-    try container.encode(reasons, forKey: .reasons)
-  }
-
-  /// Millisecond ISO-8601 in UTC, exactly as JavaScript's `toISOString`.
+/// Fieldbook's timestamps: millisecond ISO-8601 in UTC, as JavaScript's
+/// `toISOString` writes them.
+enum FieldbookTime {
   /// Formatted from whole milliseconds so a parsed timestamp re-encodes to
   /// itself (a Double's fraction would otherwise drift down a millisecond).
   static func timestamp(_ date: Date) -> String {
@@ -91,104 +100,15 @@ struct QuotaObservation: Codable, Equatable, Sendable {
   }
 }
 
-/// How Alight's readings become quota observations, and back. The record is
-/// the source of truth: live windows shown in the app are decoded from the
-/// record that was logged, so the display and the history agree exactly.
-enum AlightQuotaProducer {
-  struct Route: Equatable, Sendable {
-    let routeId: String
-    let poolId: String
-    let source: String
-    let parser: QuotaObservation.Parser
-    let resetPrecision: String
-  }
-
-  static func route(for provider: Provider) -> Route {
-    switch provider {
-    case .codex:
-      Route(routeId: "api:chatgpt-codex", poolId: "codex-subscription", source: "alight:chatgpt-wham-usage",
-        parser: .init(id: "alight.codex-usage", version: 1), resetPrecision: "second")
-    case .claude:
-      // Fieldbook's own Claude normalizer uses this route and pool.
-      Route(routeId: "cli:claude-code", poolId: "claude-subscription", source: "alight:claude-code-usage",
-        parser: .init(id: "alight.claude-usage-text", version: 1), resetPrecision: "minute")
-    case .antigravity:
-      Route(routeId: "api:antigravity-quota-summary", poolId: "antigravity-quota", source: "alight:antigravity-quota-summary",
-        parser: .init(id: "alight.antigravity-quota", version: 1), resetPrecision: "second")
-    }
-  }
-
-  static func provider(routeId: String) -> Provider? {
-    Provider.allCases.first { route(for: $0).routeId == routeId }
-  }
-
-  /// `session` and `week` (Fieldbook's names) for broad limits;
-  /// `<scope kind>:<scope key>` for scoped ones.
-  static func windowId(_ window: UsageWindow) -> String {
-    if let scope = window.scope { return "\(scope.kind):\(scope.key)" }
-    return window.speed == .fast ? "session" : "week"
-  }
-
-  /// The observation for a successful live reading; nil otherwise. Only
-  /// derived values: no credentials, raw payloads or account identifiers.
-  static func observation(for result: ProviderResult, capturedAt: Date) -> QuotaObservation? {
-    guard result.ok, result.source == "live", result.cacheAgeSeconds == nil, !result.windows.isEmpty else { return nil }
-    let route = route(for: result.provider)
-    let observedAt = QuotaObservation.timestamp(capturedAt)
-    let windows = result.windows.map { window in
-      let used = min(1, max(0, window.usedPercent / 100))
-      return QuotaObservation.Window(
-        windowId: windowId(window),
-        label: window.scope?.displayName ?? window.label,
-        usedFraction: used,
-        remainingFraction: 1 - used,
-        resetsAt: QuotaObservation.timestamp(window.resetAt),
-        resetPrecision: route.resetPrecision,
-        windowSeconds: window.limitWindowSeconds,
-        observedAt: observedAt,
-        source: route.source,
-        rawSha256: nil,
-        inferred: [],
-        unknown: []
-      )
-    }
-    return QuotaObservation(
-      routeId: route.routeId, poolId: route.poolId, source: route.source, parser: route.parser,
-      observedAt: observedAt, rawSha256: nil, status: "observed", windows: windows,
-      // A provider can hold quotas its readout does not list.
-      unknown: ["unreported_windows"], reasons: []
-    )
-  }
-
-  /// Alight windows for an observation, with pace as of `now`.
-  static func windows(from observation: QuotaObservation, now: Date) -> [UsageWindow] {
-    guard let provider = provider(routeId: observation.routeId) else { return [] }
-    return observation.windows.compactMap { record in
-      guard let resetAt = QuotaObservation.date(record.resetsAt), record.windowSeconds > 0 else { return nil }
-      let speed = WindowSpeed.cadence(for: record.windowSeconds)
-      var scope: UsageScope?
-      var style = UsageVisualStyle.hand
-      if let separator = record.windowId.firstIndex(of: ":") {
-        let kind = String(record.windowId[..<separator])
-        let key = String(record.windowId[record.windowId.index(after: separator)...])
-        scope = kind == UsageScope.fable.kind && key == UsageScope.fable.key
-          ? .fable
-          : UsageScope(kind: kind, key: key, displayName: record.label)
-        style = scope == .fable ? .outerStar : .menuRow
-      }
-      return PressureMath.window(
-        provider: provider, speed: speed, usedPercent: record.usedFraction * 100, resetAt: resetAt,
-        limitWindowSeconds: record.windowSeconds, now: now, scope: scope, visualStyle: style
-      )
-    }
-  }
-}
-
 extension CoreScript {
-  /// Fieldbook's `quotaObservationProblems`: empty when the record is valid.
-  func quotaObservationProblems(_ observation: QuotaObservation) throws -> [String] {
-    let json = String(decoding: try JSONEncoder().encode(observation), as: UTF8.self)
-    return try JSONDecoder().decode([String].self, from: Data(callString("quotaObservationProblemsJSON", [json]).utf8))
+  /// Fieldbook's `normalizeAlightQuotaSnapshot` for an encoded snapshot,
+  /// read at `readAt` (the snapshot's own `writtenAt` when replaying).
+  func normalizeAlightQuotaSnapshot(_ snapshot: Data, readAt: Date) throws -> FieldbookAlightReading {
+    let output = try callString(
+      "normalizeAlightQuotaSnapshotJSON",
+      [String(decoding: snapshot, as: UTF8.self), (readAt.timeIntervalSince1970 * 1000).rounded()]
+    )
+    return try JSONDecoder().decode(FieldbookAlightReading.self, from: Data(output.utf8))
   }
 
   /// Fieldbook's `quotaWindowPace` per window. Alight's percentage windows are
@@ -203,7 +123,7 @@ extension CoreScript {
     let input = windows.map {
       AstraWindow(
         requests_remaining: 100 - $0.usedPercent, requests_limit: 100,
-        reset_time: QuotaObservation.timestamp($0.resetAt), window_duration_seconds: $0.limitWindowSeconds
+        reset_time: FieldbookTime.timestamp($0.resetAt), window_duration_seconds: $0.limitWindowSeconds
       )
     }
     let windowsJSON = String(decoding: try JSONEncoder().encode(input), as: UTF8.self)

@@ -123,7 +123,15 @@ struct UsageWindow: Codable, Identifiable, Equatable, Sendable {
   /// Short label for the dropdown ("5h", "Weekly", "Fable"). The provider's
   /// reported duration is authoritative so a weekly `primary_window` can never
   /// be mislabeled as a five-hour limit.
-  var label: String { scope?.displayName ?? Self.durationLabel(limitWindowSeconds) }
+  var label: String {
+    guard let scope else { return Self.durationLabel(limitWindowSeconds) }
+    // A provider group (Fieldbook's reading of Antigravity's secondary
+    // models) holds both lengths under one name.
+    if scope.kind == "group", !scope.displayName.contains("(") {
+      return "\(scope.displayName) (\(Self.durationLabel(limitWindowSeconds)))"
+    }
+    return scope.displayName
+  }
 
   /// Provider-qualified label for the menu-bar summary ("Codex 5h").
   var qualifiedLabel: String { "\(provider.displayName) \(label)" }

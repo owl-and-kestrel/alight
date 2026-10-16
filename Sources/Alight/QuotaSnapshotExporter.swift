@@ -378,6 +378,9 @@ struct QuotaSnapshotExporter {
   var directorySync: DirectorySync = .system
   private let makeInstallId: () -> String
   private var state: (installId: String, nextSequence: Int)?
+  /// The bytes of the last snapshot written, for the Fieldbook outbox. Nil
+  /// after a skipped or failed export.
+  private(set) var lastWritten: Data?
 
   init(
     directory: URL = QuotaSnapshotExporter.defaultDirectory,
@@ -395,6 +398,7 @@ struct QuotaSnapshotExporter {
   /// observational and must never hold up the menu.
   @discardableResult
   mutating func export(_ inputs: [Input], writtenAt: Date = Date()) -> Outcome {
+    lastWritten = nil
     guard let producer, Self.isValidProducer(producer) else {
       Self.logger.info("quota snapshot skipped: producer metadata unavailable (development build)")
       return .skipped("producer metadata unavailable")
@@ -412,6 +416,7 @@ struct QuotaSnapshotExporter {
         return .failed("snapshot exceeds \(Self.maximumBytes) bytes")
       }
       try Self.writeAtomically(data, to: fileURL, directorySync: directorySync)
+      lastWritten = data
       return .written(sequence: sequence)
     } catch {
       Self.logger.error("quota snapshot write not completed: \(String(describing: error), privacy: .public)")
