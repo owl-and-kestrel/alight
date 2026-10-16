@@ -6,6 +6,9 @@ struct HistoryChartData: Equatable, Sendable {
   struct Point: Equatable, Identifiable, Sendable {
     /// One continuous line: a window's uninterrupted segment.
     let series: String
+    /// One filled area: everything a window read before one reset, across
+    /// gaps and account breaks, so the fill has no seams or slivers.
+    let area: String
     let windowID: String
     let date: Date
     let value: Double
@@ -73,21 +76,29 @@ struct HistoryChartData: Equatable, Sendable {
       for reading in kept {
         points.append(Point(
           series: series ?? "\(windowID)#\(reading.id.uuidString)",
+          area: "\(windowID)@\(Self.resetMinute(reading.window))",
           windowID: windowID,
           date: reading.capturedAt,
           value: style.value(usedPercent: reading.window.usedPercent)
         ))
       }
 
-      // One guide per quota window (its reset), clipped to the domain.
-      let window = first.window
-      let guideKey = "\(windowID)@\(window.resetAt.timeIntervalSince1970)"
-      if guidedWindows.insert(guideKey).inserted,
-        let guide = paceGuide(window: window, key: guideKey, domain: domain, style: style) {
-        guides.append(guide)
+      // One guide per quota window (its reset, to the minute), clipped to the
+      // domain. A window with nothing used has no pace yet, and its reported
+      // reset drifts with the clock, so it gets no guide.
+      for reading in readings where reading.window.usedPercent > 0 {
+        let guideKey = "\(windowID)@\(Self.resetMinute(reading.window))"
+        if guidedWindows.insert(guideKey).inserted,
+          let guide = paceGuide(window: reading.window, key: guideKey, domain: domain, style: style) {
+          guides.append(guide)
+        }
       }
     }
     return HistoryChartData(domain: domain, points: points, guides: guides)
+  }
+
+  private static func resetMinute(_ window: UsageWindow) -> Int {
+    Int((window.resetAt.timeIntervalSince1970 / 60).rounded())
   }
 
   static func paceGuide(window: UsageWindow, key: String, domain: ClosedRange<Date>, style: CardValueStyle) -> PaceGuide? {
@@ -97,7 +108,7 @@ struct HistoryChartData: Equatable, Sendable {
     guard start < end else { return nil }
     func point(_ date: Date) -> Point {
       let used = min(100, max(0, date.timeIntervalSince(windowStart) / window.limitWindowSeconds * 100))
-      return Point(series: "pace:\(key)", windowID: window.id, date: date, value: style.value(usedPercent: used))
+      return Point(series: "pace:\(key)", area: "pace:\(key)", windowID: window.id, date: date, value: style.value(usedPercent: used))
     }
     return PaceGuide(windowID: window.id, start: point(start), end: point(end))
   }

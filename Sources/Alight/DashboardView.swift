@@ -137,9 +137,10 @@ struct DashboardView: View {
 
   @ViewBuilder private var cardList: some View {
     if scrollsCards {
-      ScrollView { cardStack }
-        .onPreferenceChange(ListHeightKey.self) { listHeight = $0 }
-        .frame(height: min(max(listHeight, 80), Self.maximumListHeight))
+      ScrollView {
+        cardStack.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+      }
+      .frame(height: min(max(listHeight, 80), Self.maximumListHeight))
         // A drag released outside any card still ends the drag.
         .onDrop(of: [.text], isTargeted: nil) { _ in
           dragging = nil
@@ -175,9 +176,6 @@ struct DashboardView: View {
         }
       }
       .padding(12)
-      .background(GeometryReader { proxy in
-        Color.clear.preference(key: ListHeightKey.self, value: proxy.size.height)
-      })
   }
 
   private var emptyLayout: some View {
@@ -213,11 +211,6 @@ struct DashboardView: View {
     .allowsHitTesting(false)
     .accessibilityHidden(true)
   }
-}
-
-private struct ListHeightKey: PreferenceKey {
-  static let defaultValue: CGFloat = 0
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 /// Live reorder: hovering a dragged card over another moves it into that slot.

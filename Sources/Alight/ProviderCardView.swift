@@ -73,7 +73,7 @@ struct ProviderCardView: View {
       if result.needsAuth {
         Button("Sign In", action: onSignIn).controlSize(.small).buttonStyle(.borderedProminent).tint(color)
       } else if result.source == "cached" {
-        Label(result.sourceLabel?.capitalized ?? "Cached", systemImage: "clock.arrow.circlepath")
+        Label(result.sourceLabel.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Cached", systemImage: "clock.arrow.circlepath")
           .font(.caption).foregroundStyle(.secondary).help(result.error ?? "Showing the last live reading")
       } else if result.ok {
         Label("Live", systemImage: "dot.radiowaves.left.and.right")
@@ -323,6 +323,7 @@ struct HistoryChartView: View {
 
   var body: some View {
     let seriesSizes = Dictionary(grouping: data.points, by: \.series).mapValues(\.count)
+    let areaSizes = Dictionary(grouping: data.points, by: \.area).mapValues(\.count)
     let latest = Dictionary(grouping: data.points, by: \.windowID).compactMapValues { $0.max { $0.date < $1.date } }
 
     Chart {
@@ -341,12 +342,12 @@ struct HistoryChartView: View {
         }
       }
 
-      ForEach(data.points.filter { $0.windowID == primaryID }) { point in
+      ForEach(data.points.filter { $0.windowID == primaryID && areaSizes[$0.area, default: 0] > 1 }) { point in
         AreaMark(
           x: .value("Time", point.date),
           yStart: .value("Base", 0),
           yEnd: .value("Percent", point.value),
-          series: .value("Series", point.series)
+          series: .value("Series", point.area)
         )
         .interpolationMethod(.monotone)
         .foregroundStyle(
@@ -364,10 +365,13 @@ struct HistoryChartView: View {
         .foregroundStyle(by: .value("Limit", label(for: point.windowID)))
         .lineStyle(StrokeStyle(lineWidth: point.windowID == primaryID ? 2 : 1.5, lineCap: .round, lineJoin: .round))
 
+        // A reading that joins no line (an unverified account, or isolated
+        // by a gap) is a faint dot rather than a mark of its own weight.
         if seriesSizes[point.series] == 1 {
           PointMark(x: .value("Time", point.date), y: .value("Percent", point.value))
             .foregroundStyle(by: .value("Limit", label(for: point.windowID)))
-            .symbolSize(14)
+            .symbolSize(6)
+            .opacity(0.45)
         }
       }
 

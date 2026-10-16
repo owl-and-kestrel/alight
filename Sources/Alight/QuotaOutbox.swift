@@ -142,13 +142,27 @@ struct QuotaOutbox: Sendable {
   }
 
   /// What a reading is, without when it was taken: each provider's entry
-  /// minus its timestamps and cache age.
-  private static func signature(_ snapshot: Data) -> Data? {
+  /// minus its timestamps and cache age, and minus the reset of any window
+  /// with nothing used (a window that has not started reports a reset that
+  /// moves with the clock, as Antigravity's do).
+  static func signature(_ snapshot: Data) -> Data? {
     guard let object = try? JSONSerialization.jsonObject(with: snapshot) as? [String: Any],
       let providers = object["providers"] as? [[String: Any]]
     else { return nil }
-    let stripped = providers.map { provider in
-      provider.filter { !["attemptedAt", "capturedAt", "cacheAgeSeconds"].contains($0.key) }
+    let stripped = providers.map { provider -> [String: Any] in
+      var entry = provider.filter { !["attemptedAt", "capturedAt", "cacheAgeSeconds"].contains($0.key) }
+      if let groups = entry["groups"] as? [[String: Any]] {
+        entry["groups"] = groups.map { group -> [String: Any] in
+          var group = group
+          if let windows = group["windows"] as? [[String: Any]] {
+            group["windows"] = windows.map { window in
+              (window["usedPercentRaw"] as? Double) == 0 ? window.filter { $0.key != "resetAt" } : window
+            }
+          }
+          return group
+        }
+      }
+      return entry
     }
     return try? JSONSerialization.data(withJSONObject: stripped, options: [.sortedKeys])
   }

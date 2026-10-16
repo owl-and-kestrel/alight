@@ -45,6 +45,28 @@ struct QuotaOutboxTests {
     #expect(next.sequence == 4)
   }
 
+  @Test("an unused window's drifting reset is not a change")
+  func unusedWindowReset() throws {
+    let dir = directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    var outbox = QuotaOutbox(directory: dir)
+    // Antigravity reports an unstarted window's reset as now plus its length.
+    func antigravity(at date: Date, used: Double) throws -> Data {
+      let payload: [String: Any] = ["groups": [["displayName": "Claude and GPT models", "buckets": [
+        ["bucketId": "3p-5h", "window": "5h", "resetTime": FieldbookTime.timestamp(date.addingTimeInterval(18000)), "remainingFraction": 1 - used],
+      ]]]]
+      var result = ProviderResult(provider: .antigravity, ok: true, source: "live", error: nil,
+        windows: AntigravityUsageParser.windows(from: payload, now: date))
+      result.quotaReport = AntigravityUsageParser.quotaReport(from: payload)
+      return try FieldbookQuotaTests.snapshot([result], at: date)
+    }
+    if case .appended = outbox.append(try antigravity(at: start, used: 0), identities: [:]) {} else { Issue.record("first not appended") }
+    #expect(outbox.append(try antigravity(at: start.addingTimeInterval(90), used: 0), identities: [:]) == .unchanged)
+    if case .appended = outbox.append(try antigravity(at: start.addingTimeInterval(180), used: 0.1), identities: [:]) {} else {
+      Issue.record("first use not appended")
+    }
+  }
+
   @Test("lines hold the snapshot exactly as Fieldbook reads it")
   func lineFormat() throws {
     let data = try snapshot(used: 10, at: start)

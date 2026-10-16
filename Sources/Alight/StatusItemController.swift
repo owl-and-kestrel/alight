@@ -46,6 +46,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     SettingsWindowController.shared.automaticallyInstallsUpdates = updater.automaticallyInstallsUpdates
 
     updateIcon()
+    #if DEBUG
+    installDebugHooks()
+    #endif
 
     Task {
       await store.refresh()
@@ -173,4 +176,47 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
   @objc private func quit() {
     NSApplication.shared.terminate(nil)
   }
+
+  #if DEBUG
+  /// Development builds only: inspect the live popover without Accessibility
+  /// or Screen Recording access. Post the distributed notification
+  /// `com.owlandkestrel.alight.debug` with an object of `show`, `close`, or
+  /// `snapshot:<png path>` (opens the popover and draws its window), or
+  /// `status:<path>` (writes each provider's result, errors included).
+  private func installDebugHooks() {
+    DistributedNotificationCenter.default().addObserver(
+      forName: Notification.Name("com.owlandkestrel.alight.debug"), object: nil, queue: .main
+    ) { [weak self] notification in
+      let command = notification.object as? String ?? ""
+      MainActor.assumeIsolated { self?.debugCommand(command) }
+    }
+  }
+
+  private func debugCommand(_ command: String) {
+    if command == "close" {
+      popover.performClose(nil)
+      return
+    }
+    if command.hasPrefix("status:") {
+      let lines = store.status.results.map { result in
+        "\(result.provider.rawValue) ok=\(result.ok) source=\(result.source) needsAuth=\(result.needsAuth) " +
+          "windows=\(result.windows.map(\.id)) error=\(result.error ?? "none")"
+      }
+      try? lines.joined(separator: "\n").write(toFile: String(command.dropFirst("status:".count)), atomically: true, encoding: .utf8)
+      return
+    }
+    if !popover.isShown { togglePopover() }
+    guard command.hasPrefix("snapshot:") else { return }
+    let path = String(command.dropFirst("snapshot:".count))
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+      MainActor.assumeIsolated {
+        guard let view = self?.popover.contentViewController?.view,
+          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+      }
+    }
+  }
+  #endif
 }
